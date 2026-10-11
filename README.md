@@ -5,6 +5,38 @@
 
 # MyTube
 
+---
+
+## 📢 中文说明：基于原作者项目的增强更新版
+
+> 本仓库基于 **[franklioxygen/MyTube](https://github.com/franklioxygen/MyTube)**（原作者项目）更新而来，所有核心功能与设计功劳属于原作者。本仓库是个人增强更新分支，在原版基础上做了以下更新，供自用与交流。
+
+### 一、桌面版：无头服务与系统托盘
+
+1. **后台服务与桌面 GUI 自动交接**：新增计划任务 `MyTubeHeadlessServer` 配合脚本，让后端以无窗口方式常驻（登录自启、崩溃自愈）。启动桌面版时自动停掉后台服务并接管端口，退出桌面版时自动把服务拉回来——手机/平板端 7×24 可连，桌面 GUI 想用就用，互不冲突。
+2. **系统托盘程序**（`desktop/scripts/headless-server-tray.ps1`）：右下角常驻 MyTube 图标（绿色＝运行中 / 灰色＝待机或停止），菜单支持打开 MyTube（浏览器）、重启服务、停止服务并退出；后端进程崩溃自动拉起。
+3. **修复锁屏界面关闭导致进程僵死**：在启动密码锁界面直接关窗时，原版会留下一个无窗口的僵尸进程且后端不退出；现在会正常退出应用并触发清理。
+
+### 二、工作区源码同步
+
+4. **后端/前端本地开发改动一并同步**：下载断点续传适配（`downloadResumeAdoption`）、自动关机服务（`autoShutdownService`）、MissAV 下载器测试、设置与下载控制器更新等，详见提交记录。
+
+### 三、其他
+
+5. 本地调试产物（`.curl-cookies.txt` 等）加入 `.gitignore`。
+6. 数据文件（视频库、数据库、密钥）一律不入库，由 `.gitignore` 排除。
+
+### 使用要点
+
+- 本项目为**自托管**架构：后端跑在电脑/NAS 上（Docker 或桌面版均可），移动端通过局域网或 Cloudflare Tunnel 连接。
+- 无头服务的注册与托盘使用方法见 `desktop/scripts/headless-server-tray.ps1` 内注释与 `desktop/README.md`。
+
+---
+
+（以下为原项目英文 README / The original English README follows.）
+
+---
+
 Self-hosted downloader and player for YouTube, Bilibili, Twitch, MissAV, and [yt-dlp sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). Features channel subscriptions, auto-downloads, local media storage, and private RSS feed links for external readers. Organize your library into collections with a sleek UI. Includes built-in Cloudflare Tunnel support for secure remote access without port forwarding. Docker-ready deployment.
 
 🚀 100% Prompt-Engineered. 0 Lines of Manual Code.
