@@ -374,7 +374,7 @@ export async function downloadVideo(
 
     // Prepare download flags with a temp path to determine mergeOutputFormat
     const tempVideoPath = resolveSafeChildPath(VIDEOS_DIR, `${safeBaseFilename}.mp4`);
-    const { flags, mergeOutputFormat, videoExtension } = prepareDownloadFlags(
+    const { flags, mergeOutputFormat, videoExtension } = await prepareDownloadFlags(
       videoUrl,
       tempVideoPath,
       downloadUserConfig

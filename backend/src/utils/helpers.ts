@@ -21,6 +21,7 @@ const MISSAV_HOSTNAMES = [
 ] as const;
 const TWITTER_HOSTNAMES = ["x.com", "twitter.com"] as const;
 const TWITCH_HOSTNAMES = ["twitch.tv"] as const;
+const PORNHUB_HOSTNAMES = ["pornhub.com"] as const;
 
 const ALLOWED_BILIBILI_SHORTENER_HOSTNAMES = ["b23.tv", "bili2233.cn"] as const;
 const REQUEST_HOST_OUTPUT_MAP: Record<string, string> = {
@@ -130,6 +131,10 @@ export function isTwitterUrl(url: string): boolean {
 
 export function isTwitchUrl(url: string): boolean {
   return hasAllowedHostname(url, TWITCH_HOSTNAMES);
+}
+
+export function isPornHubUrl(url: string): boolean {
+  return hasAllowedHostname(url, PORNHUB_HOSTNAMES);
 }
 
 // Helper function to extract URL from text that might contain a title and URL

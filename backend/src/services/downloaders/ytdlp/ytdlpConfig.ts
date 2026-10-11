@@ -1,5 +1,6 @@
 import * as storageService from "../../../services/storageService";
-import { isTwitterUrl, isYouTubeUrl } from "../../../utils/helpers";
+import { isTwitterUrl, isYouTubeUrl, isPornHubUrl } from "../../../utils/helpers";
+import { isYtDlpImpersonateAvailable } from "../../../utils/ytdlp/runtime";
 import { logger } from "../../../utils/logger";
 import { getUserYtDlpConfig } from "../../../utils/ytDlpUtils";
 import { getProviderScript } from "./ytdlpHelpers";
@@ -20,6 +21,7 @@ interface DownloadFlagContext {
   config: UserYtDlpConfig;
   isYouTube: boolean;
   isTwitter: boolean;
+  isPornHub: boolean;
   formatSortValue?: string;
   youtubeFormat: string;
   mergeOutputFormat: string;
@@ -244,6 +246,34 @@ function applyTwitterFormatIfNeeded(args: {
   logger.info("Twitter/X URL detected - using MP4 format for Safari compatibility");
 }
 
+async function applyPornHubHandlingIfNeeded(args: {
+  flags: YtDlpFlags;
+  isPornHub: boolean;
+  videoUrl: string;
+}): Promise<void> {
+  const { flags, isPornHub, videoUrl } = args;
+  if (!isPornHub) {
+    return;
+  }
+
+  const canImpersonate = await isYtDlpImpersonateAvailable();
+  if (canImpersonate) {
+    flags.impersonate = "chrome";
+    logger.info("PornHub URL detected - using Chrome impersonation to bypass Cloudflare");
+  } else {
+    logger.warn("PornHub URL detected but impersonation is unavailable; download may fail");
+  }
+
+  try {
+    const urlObj = new URL(videoUrl);
+    const referer = `${urlObj.protocol}//${urlObj.host}/`;
+    flags.addHeader = [`Referer:${referer}`];
+    logger.info("PornHub Referer header set:", referer);
+  } catch {
+    flags.addHeader = ["Referer:https://www.pornhub.com/"];
+  }
+}
+
 function applyYouTubeFormatIfNeeded(args: {
   flags: YtDlpFlags;
   isYouTube: boolean;
@@ -402,11 +432,11 @@ function logProxyPreservation(flags: YtDlpFlags, config: UserYtDlpConfig): void 
   }
 }
 
-function createDownloadFlagContext(
+async function createDownloadFlagContext(
   videoUrl: string,
   outputPath: string,
   config: UserYtDlpConfig,
-): DownloadFlagContext {
+): Promise<DownloadFlagContext> {
   const { defaultFormat, youtubeFormat } = resolveDownloadFormats(config);
   const {
     safeUserConfig,
@@ -421,6 +451,7 @@ function createDownloadFlagContext(
 
   const isTwitter = isTwitterUrl(videoUrl);
   const isYouTube = isYouTubeUrl(videoUrl);
+  const isPornHub = isPornHubUrl(videoUrl);
   const mergeOutputFormat = resolveMergeOutputFormat({
     isYouTube,
     isTwitter,
@@ -440,12 +471,14 @@ function createDownloadFlagContext(
 
   applyFormatSortIfProvided(flags, formatSortValue);
   applyTwitterFormatIfNeeded({ flags, isTwitter, config });
+  await applyPornHubHandlingIfNeeded({ flags, isPornHub, videoUrl });
 
   return {
     flags,
     config,
     isYouTube,
     isTwitter,
+    isPornHub,
     formatSortValue,
     youtubeFormat,
     mergeOutputFormat,
@@ -482,13 +515,13 @@ function applyPostBuildRules(context: DownloadFlagContext): string {
 /**
  * Prepare yt-dlp flags for video download
  */
-export function prepareDownloadFlags(
+export async function prepareDownloadFlags(
   videoUrl: string,
   outputPath: string,
   userConfig?: any,
-): PreparedFlags {
+): Promise<PreparedFlags> {
   const config = (userConfig || getUserYtDlpConfig(videoUrl) || {}) as UserYtDlpConfig;
-  const context = createDownloadFlagContext(videoUrl, outputPath, config);
+  const context = await createDownloadFlagContext(videoUrl, outputPath, config);
   const mergeOutputFormat = applyPostBuildRules(context);
   const { flags } = context;
 
