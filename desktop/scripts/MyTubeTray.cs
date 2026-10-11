@@ -39,7 +39,28 @@ namespace MyTubeTray
         static Process backend;
         static bool desiredRunning = true;
         static long lastStartTicks = 0;
+        static long handoverUntilUtc = 0;
         static readonly object logLock = new object();
+
+        // The desktop app writes this file when it wants the port; the tray
+        // stops its backend and stands by until the desktop quits.
+        static string HandoverFlagPath()
+        {
+            return Path.Combine(MyTubeHome, "tray-handover.flag");
+        }
+
+        static bool ConsumeHandoverFlag()
+        {
+            try
+            {
+                if (!File.Exists(HandoverFlagPath())) return false;
+                File.Delete(HandoverFlagPath());
+                handoverUntilUtc = DateTime.UtcNow.AddSeconds(45).Ticks;
+                AppendLog("desktop handover requested, standing down");
+                return true;
+            }
+            catch { return false; }
+        }
 
         [STAThread]
         static void Main()
@@ -71,9 +92,10 @@ namespace MyTubeTray
             trayIcon.Visible = true;
             BuildMenu();
 
-            if (TestPortBusy())
+            ConsumeHandoverFlag();
+            if (TestPortBusy() || DateTime.UtcNow.Ticks < handoverUntilUtc)
             {
-                Balloon("端口已被桌面版占用，托盘进入待机。");
+                Balloon("端口由桌面版接管，托盘进入待机。");
             }
             else
             {
@@ -225,6 +247,10 @@ namespace MyTubeTray
         {
             try
             {
+                // Desktop handover request: stop our backend, stand by while
+                // the desktop app boots, resume when the port frees up.
+                ConsumeHandoverFlag();
+
                 // Our backend alive: leave it alone, whether booting or serving.
                 // Never key off the port here - the backend binds ~60s after
                 // start and killing on "port busy" would murder it.
@@ -245,6 +271,16 @@ namespace MyTubeTray
                     return;
                 }
 
+                bool inHandover = DateTime.UtcNow.Ticks < handoverUntilUtc;
+                if (inHandover)
+                {
+                    if (TestPortBusy()) handoverUntilUtc = 0; // desktop bound it
+                    trayIcon.Icon = iconGray;
+                    itemStatus.Text = "服务状态：由桌面版运行中";
+                    trayIcon.Text = "MyTube - 由桌面版运行";
+                    return;
+                }
+
                 if (TestPortBusy())
                 {
                     // Nothing of ours running, port served by the desktop app.
@@ -256,14 +292,14 @@ namespace MyTubeTray
 
                 long now = DateTime.UtcNow.Ticks;
                 if ((now - lastStartTicks) < RestartDelayMs * 10000) return;
-                AppendLog("[tray-exe] supervision: backend not running, restarting");
+                AppendLog("supervision: backend not running, restarting");
                 StartBackend();
                 trayIcon.Icon = iconGreen;
                 itemStatus.Text = "服务状态：启动中…";
             }
             catch (Exception ex)
             {
-                AppendLog("[tray-exe] tick error: " + ex.Message);
+                AppendLog("tick error: " + ex.Message);
             }
         }
 

@@ -178,13 +178,19 @@ function loadOrCreateJwtSecret(homeDir) {
 // ---------------------------------------------------------------------------
 
 function isPortFree(port) {
+  // Probe by CONNECTING (like a real client). Listening on 127.0.0.1:port
+  // would wrongly report "free" on Windows even when 0.0.0.0:port is bound.
   return new Promise((resolve) => {
-    const probe = net.createServer();
-    probe.once("error", () => resolve(false));
-    probe.once("listening", () => {
-      probe.close(() => resolve(true));
-    });
-    probe.listen(port, "127.0.0.1");
+    const socket = new net.Socket();
+    const finish = (busy) => {
+      socket.destroy();
+      resolve(!busy);
+    };
+    socket.setTimeout(800);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+    socket.connect(port, "127.0.0.1");
   });
 }
 
@@ -738,9 +744,19 @@ function sleep(ms) {
 // our own backend can bind it.
 async function yieldPortToDesktop() {
   if (!HEADLESS_SERVICE_TASK) return;
+  const handoverHomeDir = process.env.MYTUBE_HOME
+    ? path.resolve(process.env.MYTUBE_HOME)
+    : path.join(app.getPath("userData"), "server-home");
   appendDesktopLog(`headless handover: stopping ${HEADLESS_SERVICE_TASK}`);
+  // Tell the tray exe to stand down (it polls this file every 3s).
+  try {
+    fs.writeFileSync(
+      path.join(handoverHomeDir, "tray-handover.flag"),
+      new Date().toISOString()
+    );
+  } catch { }
   spawnSchtasks("End");
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 40; i++) {
     if (await isPortFree(DEFAULT_PORT)) {
       return;
     }
