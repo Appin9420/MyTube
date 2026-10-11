@@ -19,6 +19,7 @@ import {
 import { logger } from "../../utils/logger";
 import { ProgressTracker } from "../../utils/progressTracker";
 import {
+  execFileSafe,
   pathExistsSafeSync,
   resolveSafeChildPath,
   statSafeSync,
@@ -434,6 +435,11 @@ export class MissAVDownloader extends BaseDownloader {
       }
 
       // Prepare flags object - merge user config with required settings
+      // Convert static path to yt-dlp template with %(ext)s to preserve directory structure
+      const outputDir = path.dirname(newVideoPath);
+      const outputFilename = path.basename(newVideoPath, path.extname(newVideoPath));
+      const outputTemplate = resolveSafeChildPath(outputDir, `${outputFilename}.%(ext)s`);
+      
       const flags: any = {
         ...networkConfig, // Apply network settings (proxy, etc.)
         // Parallel HLS fragment downloads: serial fragments cap at a single
@@ -441,7 +447,7 @@ export class MissAVDownloader extends BaseDownloader {
         // overrides this default.
         concurrentFragments:
           userConfig.N ?? userConfig.concurrentFragments ?? 8,
-        output: newVideoPath,
+        output: outputTemplate,
         format: downloadFormat,
         mergeOutputFormat: mergeOutputFormat,
         ...(canImpersonate ? { impersonate: "chrome" } : {}),
@@ -519,6 +525,9 @@ export class MissAVDownloader extends BaseDownloader {
       // Log the full command for debugging
       logger.info("Executing yt-dlp command:", YT_DLP_PATH, args.join(" "));
 
+      // Track final video path (may change if WebM is transcoded to MP4)
+      let finalVideoFilePath = newVideoPath;
+
       try {
         await new Promise<void>((resolve, reject) => {
           const child = spawn(YT_DLP_PATH, args);
@@ -572,6 +581,34 @@ export class MissAVDownloader extends BaseDownloader {
         });
 
         logger.info("Video downloaded successfully");
+
+        // Auto-transcode WebM to MP4 for browser compatibility
+        const ext = path.extname(newVideoPath).toLowerCase();
+        if (ext === ".webm") {
+          const mp4Path = newVideoPath.slice(0, -ext.length) + ".mp4";
+          logger.info(`Transcoding WebM to MP4: ${path.basename(newVideoPath)}`);
+          try {
+            await execFileSafe("ffmpeg", [
+              "-i", newVideoPath,
+              "-c:v", "libx264",
+              "-preset", "fast",
+              "-crf", "23",
+              "-c:a", "aac",
+              "-b:a", "128k",
+              "-movflags", "+faststart",
+              mp4Path,
+              "-y"
+            ]);
+            await fs.remove(newVideoPath);
+            finalVideoFilePath = mp4Path;
+            logger.info(`Transcode complete: ${path.basename(mp4Path)}`);
+          } catch (transcodeError) {
+            logger.warn(`Failed to transcode WebM to MP4, keeping original: ${transcodeError}`);
+            if (await fs.pathExists(mp4Path)) {
+              await fs.remove(mp4Path);
+            }
+          }
+        }
       } catch (err: any) {
         if (stopReason === "pause" || isPausedError(err)) {
           throw DownloadPausedError.create();
@@ -593,7 +630,7 @@ export class MissAVDownloader extends BaseDownloader {
         if (stopReason === "pause" || isPausedError(error)) {
           throw DownloadPausedError.create();
         }
-        await cleanupTemporaryFiles(newVideoPath);
+        await cleanupTemporaryFiles(finalVideoFilePath);
         throw error;
       }
 
@@ -628,7 +665,7 @@ export class MissAVDownloader extends BaseDownloader {
       try {
         const { getVideoDuration } =
           await import("../../services/metadataService");
-        const durationSec = await getVideoDuration(newVideoPath);
+        const durationSec = await getVideoDuration(finalVideoFilePath);
         if (durationSec) {
           duration = durationSec.toString();
         }
@@ -639,8 +676,8 @@ export class MissAVDownloader extends BaseDownloader {
       // 10. Get file size
       let fileSize: string | undefined;
       try {
-        if (pathExistsSafeSync(newVideoPath, VIDEOS_DIR)) {
-          const stats = statSafeSync(newVideoPath, VIDEOS_DIR);
+        if (pathExistsSafeSync(finalVideoFilePath, VIDEOS_DIR)) {
+          const stats = statSafeSync(finalVideoFilePath, VIDEOS_DIR);
           fileSize = stats.size.toString();
         }
       } catch (e) {

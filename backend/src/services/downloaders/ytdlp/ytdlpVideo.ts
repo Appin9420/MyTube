@@ -38,6 +38,7 @@ import {
   InvalidProxyError,
 } from "../../../utils/ytDlpUtils";
 import {
+  execFileSafe,
   moveSafeSync,
   pathExistsSafeSync,
   removeSafe,
@@ -58,6 +59,40 @@ import { prepareDownloadFlags } from "./ytdlpConfig";
 import { getProviderScript } from "./ytdlpHelpers";
 import { extractVideoMetadata } from "./ytdlpMetadata";
 import { processSubtitles } from "./ytdlpSubtitle";
+
+async function transcodeWebMToMp4(videoPath: string): Promise<string> {
+  const ext = path.extname(videoPath).toLowerCase();
+  if (ext !== ".webm") {
+    return videoPath;
+  }
+
+  const mp4Path = videoPath.slice(0, -ext.length) + ".mp4";
+  logger.info(`Transcoding WebM to MP4: ${path.basename(videoPath)}`);
+
+  try {
+    await execFileSafe("ffmpeg", [
+      "-i", videoPath,
+      "-c:v", "libx264",
+      "-preset", "fast",
+      "-crf", "23",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-movflags", "+faststart",
+      mp4Path,
+      "-y"
+    ]);
+
+    await fs.remove(videoPath);
+    logger.info(`Transcode complete: ${path.basename(mp4Path)}`);
+    return mp4Path;
+  } catch (error) {
+    logger.warn(`Failed to transcode WebM to MP4, keeping original: ${error}`);
+    if (await fs.pathExists(mp4Path)) {
+      await fs.remove(mp4Path);
+    }
+    return videoPath;
+  }
+}
 
 // Helper class to access BaseDownloader methods without circular dependency
 class YtDlpDownloaderHelper extends BaseDownloader {
@@ -643,6 +678,13 @@ export async function downloadVideo(
     }
 
     logger.info("Video downloaded successfully");
+
+    // Auto-transcode WebM to MP4 for browser compatibility
+    const transcodedPath = await transcodeWebMToMp4(newVideoPathWithFormat);
+    if (transcodedPath !== newVideoPathWithFormat) {
+      newVideoPathWithFormat = transcodedPath;
+      finalVideoFilename = path.basename(transcodedPath);
+    }
 
     // Check if download was cancelled before processing thumbnails and subtitles
     try {

@@ -28,7 +28,7 @@ interface DownloadFlagContext {
 const DEFAULT_FORMAT =
   "bestvideo[vcodec!*=av01]+bestaudio/best[vcodec!*=av01]/best";
 const DEFAULT_YOUTUBE_FORMAT =
-  "bestvideo[vcodec^=vp9][ext=webm]+bestaudio[ext=webm]/bestvideo[vcodec^=vp9]+bestaudio/bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best";
+  "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[vcodec^=vp9][ext=webm]+bestaudio[ext=webm]/bestvideo[vcodec^=vp9]+bestaudio/bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best";
 const TWITTER_SAFARI_FORMAT =
   "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
 const YOUTUBE_HIGH_RES_FORMAT = DEFAULT_YOUTUBE_FORMAT;
@@ -170,7 +170,7 @@ function resolveMergeOutputFormat(args: {
   if (isTwitter) {
     return "mp4";
   }
-  return isYouTube ? "webm/mp4" : "mp4";
+  return "mp4";
 }
 
 function resolvePreferredVideoExtension(mergeOutputFormat: string): string {

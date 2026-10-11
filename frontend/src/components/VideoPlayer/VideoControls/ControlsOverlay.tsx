@@ -10,6 +10,7 @@ import LoopControl from './LoopControl';
 import PlaybackControls from './PlaybackControls';
 import SpeedControl from './SpeedControl';
 import ProgressBar from './ProgressBar';
+import SetCoverControl from './SetCoverControl';
 import SubtitleControl from './SubtitleControl';
 import VolumeControl from './VolumeControl';
 
@@ -44,6 +45,7 @@ interface ControlsOverlayProps {
     onSelectSubtitle: (index: number) => void;
     onToggleFullscreen: () => void;
     onToggleLoop: () => void;
+    onSetCover?: () => void;
     onControlsMouseEnter: () => void;
     playbackRate: number;
     onPlaybackRateChange: (rate: number) => void;
@@ -88,6 +90,7 @@ const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
     onSelectSubtitle,
     onToggleFullscreen,
     onToggleLoop,
+    onSetCover,
     onControlsMouseEnter,
     playbackRate,
     onPlaybackRateChange,
@@ -239,6 +242,10 @@ const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
                             isLooping={isLooping}
                             onToggle={onToggleLoop}
                         />
+
+                        {onSetCover && (
+                            <SetCoverControl onSetCover={onSetCover} />
+                        )}
                     </Stack>
                 </Stack>
             </Box>
@@ -253,7 +260,7 @@ const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
                 isFullscreen={isFullscreen}
             />
 
-            {/* Mobile: Live Translate, Fullscreen, Loop, Speed */}
+            {/* Mobile: Live Translate, Fullscreen, Loop, Set Cover, Speed */}
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ display: { xs: 'flex', sm: 'none' }, ml: 1, justifyContent: 'center', mt: 1 }}>
                 <LiveTranslationControlButton />
 
@@ -266,6 +273,10 @@ const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
                     isLooping={isLooping}
                     onToggle={onToggleLoop}
                 />
+
+                {onSetCover && (
+                    <SetCoverControl onSetCover={onSetCover} />
+                )}
 
                 <SpeedControl
                     playbackRate={playbackRate}

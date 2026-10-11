@@ -121,9 +121,9 @@ describe('YtDlpDownloader format defaults', () => {
         expect(mockExecuteYtDlpSpawn).toHaveBeenCalledTimes(1);
         const args = mockExecuteYtDlpSpawn.mock.calls[0][1];
 
-        expect(args.format).toContain('vcodec^=vp9');
+        expect(args.format).toContain('vcodec^=avc1');
         expect(args.format).not.toContain('av01');
-        expect(args.mergeOutputFormat).toBe('webm/mp4');
+        expect(args.mergeOutputFormat).toBe('mp4');
         expect(args.output).toContain('.%(ext)s');
     });
 
@@ -140,13 +140,13 @@ describe('YtDlpDownloader format defaults', () => {
         
         // Should have formatSort
         expect(args.formatSort).toBe('res:2160');
-        // Should prefer VP9 instead of being restricted to avc1/h264.
-        expect(args.format.indexOf('vcodec^=vp9')).toBeLessThan(args.format.indexOf('vcodec^=avc1'));
+        // Should prefer H264 first for browser compatibility, with VP9 fallback.
+        expect(args.format.indexOf('vcodec^=avc1')).toBeLessThan(args.format.indexOf('vcodec^=vp9'));
         // Should use the high-quality browser-playable format.
-        expect(args.format).toContain('vcodec^=vp9');
+        expect(args.format).toContain('vcodec^=avc1');
         expect(args.format).not.toContain('av01');
-        // Should prefer WebM while still allowing MP4 fallback.
-        expect(args.mergeOutputFormat).toBe('webm/mp4');
+        // Should use MP4 output format for maximum browser compatibility.
+        expect(args.mergeOutputFormat).toBe('mp4');
         expect(args.output).toContain('.%(ext)s');
     });
 

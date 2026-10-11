@@ -35,6 +35,7 @@ interface VideoControlsProps {
     statisticsRelatedEventId?: string | null;
     onVideoElementReady?: (videoElement: HTMLVideoElement | null) => void;
     liveSubtitle?: { available: boolean; label: string; track: TextTrack | null };
+    onSetCover?: () => void;
 }
 
 const VideoControls: React.FC<VideoControlsProps> = ({
@@ -60,6 +61,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
     statisticsRelatedEventId = null,
     onVideoElementReady,
     liveSubtitle,
+    onSetCover,
 }) => {
     // Core video player logic
     const videoPlayer = useVideoPlayer({
@@ -310,6 +312,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
                         })()}
                         onUploadSubtitle={onUploadSubtitle}
                         onDeleteSubtitle={onDeleteSubtitle}
+                        onSetCover={onSetCover}
                     />
                 </Box>
             </Box>

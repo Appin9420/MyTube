@@ -10,7 +10,8 @@ import {
     Typography
 } from '@mui/material';
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import ConfirmationModal from '../components/ConfirmationModal';
 import DeleteCollectionModal from '../components/DeleteCollectionModal';
 import CollectionsTable from '../components/ManagePage/CollectionsTable';
@@ -27,6 +28,7 @@ import { Collection, Video } from '../types';
 import { formatSize } from '../utils/formatUtils';
 
 const ManagePage: React.FC = () => {
+    const location = useLocation();
     const [searchTerm, setSearchTerm] = useState<string>('');
     const [tabValue, setTabValue] = useState(0);
     const { t } = useLanguage();
@@ -44,6 +46,13 @@ const ManagePage: React.FC = () => {
     const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
     const [showVideoDeleteModal, setShowVideoDeleteModal] = useState<boolean>(false);
     const [showScanConfirmModal, setShowScanConfirmModal] = useState(false);
+
+    useEffect(() => {
+        const locationState = location.state as { tab?: string } | null;
+        if (locationState?.tab === 'trash') {
+            setTabValue(2);
+        }
+    }, [location.state]);
 
     // Pagination state
     const [collectionPage, setCollectionPage] = useState(1);

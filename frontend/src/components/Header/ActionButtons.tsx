@@ -1,5 +1,6 @@
-import { Brightness4, Brightness7, Download, Settings } from '@mui/icons-material';
+import { Brightness4, Brightness7, Delete, Download, Settings } from '@mui/icons-material';
 import { Badge, Box, IconButton, Tooltip, useMediaQuery, useTheme } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -39,6 +40,11 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isTouch = useMediaQuery('(hover: none), (pointer: coarse)');
+    const navigate = useNavigate();
+
+    const handleTrashClick = () => {
+        navigate('/manage', { state: { tab: 'trash' } });
+    };
 
     return (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -56,6 +62,11 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
                         queuedDownloads={queuedDownloads}
                         hasActiveSubscriptions={hasActiveSubscriptions}
                     />
+                    <Tooltip title="回收站" disableHoverListener={isTouch}>
+                        <IconButton color="inherit" aria-label="trash" onClick={handleTrashClick}>
+                            <Delete />
+                        </IconButton>
+                    </Tooltip>
                 </>
             )}
 

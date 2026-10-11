@@ -32,13 +32,15 @@ import { useVideoQueries } from '../hooks/useVideoQueries';
 import { useVideoRecommendations } from '../hooks/useVideoRecommendations';
 import { useVideoSubscriptions } from '../hooks/useVideoSubscriptions';
 import { getBackendUrl } from '../utils/apiUrl';
+import { useSnackbar } from '../contexts/SnackbarContext';
 
 const VideoPlayer: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const location = useLocation();
     const { t } = useLanguage();
-    const { videos } = useVideo();
+    const { videos, uploadThumbnail } = useVideo();
+    const { showSnackbar } = useSnackbar();
     const { userRole } = useAuth();
     const { data: settings } = useSettings();
     const isVisitor = userRole === 'visitor';
@@ -286,6 +288,53 @@ const VideoPlayer: React.FC = () => {
         await visibilityMutation.mutateAsync(newVisibility);
     };
 
+    const handleSetCover = async () => {
+        if (!id || !videoElement) {
+            showSnackbar(t('coverSetFailed'), 'error');
+            return;
+        }
+
+        try {
+            const canvas = document.createElement('canvas');
+            const videoWidth = videoElement.videoWidth;
+            const videoHeight = videoElement.videoHeight;
+
+            if (!videoWidth || !videoHeight) {
+                showSnackbar(t('coverSetFailed'), 'error');
+                return;
+            }
+
+            canvas.width = videoWidth;
+            canvas.height = videoHeight;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                showSnackbar(t('coverSetFailed'), 'error');
+                return;
+            }
+
+            ctx.drawImage(videoElement, 0, 0, videoWidth, videoHeight);
+
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    showSnackbar(t('coverSetFailed'), 'error');
+                    return;
+                }
+
+                const file = new File([blob], `cover-${Date.now()}.jpg`, { type: 'image/jpeg' });
+                uploadThumbnail(id, file)
+                    .then(() => {
+                        showSnackbar(t('coverSetSuccess'), 'success');
+                    })
+                    .catch(() => {
+                        showSnackbar(t('coverSetFailed'), 'error');
+                    });
+            }, 'image/jpeg', 0.95);
+        } catch {
+            showSnackbar(t('coverSetFailed'), 'error');
+        }
+    };
+
     const executeRemoveFromCollection = async (collectionId: string) => {
         await handleRemoveFromCollection(collectionId);
         setConfirmationModal({ ...confirmationModal, isOpen: false });
@@ -418,6 +467,7 @@ const VideoPlayer: React.FC = () => {
                             });
                         }}
                         onVideoElementReady={setVideoElement}
+                        onSetCover={handleSetCover}
                         liveSubtitle={{
                             available: liveSubtitleTrack.isActive,
                             label: liveSubtitleTrack.label,

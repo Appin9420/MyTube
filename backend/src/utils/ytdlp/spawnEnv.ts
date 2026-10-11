@@ -14,14 +14,21 @@ function getCachedProviderPluginPath(): string {
 /**
  * Build the environment used to spawn yt-dlp, injecting the bgutil provider
  * plugin onto PYTHONPATH when one is configured.
+ * Forces UTF-8 encoding for Python's stdout/stderr to prevent garbled titles
+ * on Windows systems with non-UTF-8 code pages.
  */
 export function getYtDlpSpawnEnv(): NodeJS.ProcessEnv {
   const providerPluginPath = getCachedProviderPluginPath();
+  const baseEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PYTHONIOENCODING: "utf-8",
+  };
+
   if (!providerPluginPath) {
-    return process.env;
+    return baseEnv;
   }
 
-  const pythonPathEntries = (process.env.PYTHONPATH ?? "")
+  const pythonPathEntries = (baseEnv.PYTHONPATH ?? "")
     .split(path.delimiter)
     .filter(Boolean);
 
@@ -30,7 +37,7 @@ export function getYtDlpSpawnEnv(): NodeJS.ProcessEnv {
   }
 
   return {
-    ...process.env,
+    ...baseEnv,
     PYTHONPATH: pythonPathEntries.join(path.delimiter),
   };
 }
