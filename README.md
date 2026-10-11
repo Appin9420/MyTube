@@ -21,11 +21,6 @@
 
 4. **后端/前端本地开发改动一并同步**：下载断点续传适配（`downloadResumeAdoption`）、自动关机服务（`autoShutdownService`）、MissAV 下载器测试、设置与下载控制器更新等，详见提交记录。
 
-### 三、其他
-
-5. 本地调试产物（`.curl-cookies.txt` 等）加入 `.gitignore`。
-6. 数据文件（视频库、数据库、密钥）一律不入库，由 `.gitignore` 排除。
-
 ### 使用要点
 
 - 本项目为**自托管**架构：后端跑在电脑/NAS 上（Docker 或桌面版均可），移动端通过局域网或 Cloudflare Tunnel 连接。
