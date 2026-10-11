@@ -14,12 +14,12 @@
 ### 一、桌面版：无头服务与系统托盘
 
 1. **后台服务与桌面 GUI 自动交接**：新增计划任务 `MyTubeHeadlessServer` 配合脚本，让后端以无窗口方式常驻（登录自启、崩溃自愈）。启动桌面版时自动停掉后台服务并接管端口，退出桌面版时自动把服务拉回来——手机/平板端 7×24 可连，桌面 GUI 想用就用，互不冲突。
-2. **系统托盘程序**（`desktop/scripts/headless-server-tray.ps1`）：右下角常驻 MyTube 图标（绿色＝运行中 / 灰色＝待机或停止），菜单支持打开 MyTube（浏览器）、重启服务、停止服务并退出；后端进程崩溃自动拉起。
+2. **系统托盘程序**：右下角常驻 MyTube 图标（绿色＝运行中 / 灰色＝待机或停止），菜单支持打开 MyTube（浏览器）、重启服务、停止服务并退出；后端进程崩溃自动拉起。
 
 ### 二、功能适配
 
 3. **多线程（并发分片）下载**：yt-dlp、B 站下载器启用并发分片下载（默认 4~8 并发，可在设置中调整），大幅提升大文件下载速度。
-4. **下载断点续传适配**（`downloadResumeAdoption`）、**自动关机服务**（`autoShutdownService`）等后端/前端功能改动，详见提交记录。
+4. **下载断点续传适配**、**自动关机服务**等后端/前端功能改动，详见提交记录。
 
 ### 使用要点
 
@@ -32,7 +32,7 @@
 
 ---
 
-Self-hosted downloader and player for YouTube, Bilibili, Twitch, MissAV, and [yt-dlp sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). Features channel subscriptions, auto-downloads, local media storage, and private RSS feed links for external readers. Organize your library into collections with a sleek UI. Includes built-in Cloudflare Tunnel support for secure remote access without port forwarding. Docker-ready deployment.
+Self-hosted downloader and player for YouTube, Bilibili, Twitch, and [yt-dlp sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). Features channel subscriptions, auto-downloads, local media storage, and private RSS feed links for external readers. Organize your library into collections with a sleek UI. Includes built-in Cloudflare Tunnel support for secure remote access without port forwarding. Docker-ready deployment.
 
 🚀 100% Prompt-Engineered. 0 Lines of Manual Code.
 Built using the [franklioxygen/agent-workflows](https://github.com/franklioxygen/agent-workflows) workflow.
@@ -62,7 +62,7 @@ Built using the [franklioxygen/agent-workflows](https://github.com/franklioxygen
 
 ## Features
 
-- **Video Downloading**: Download YouTube, Bilibili, Twitch, MissAV and other yt-dlp-supported videos with a simple URL input.
+- **Video Downloading**: Download YouTube, Bilibili, Twitch and other yt-dlp-supported videos with a simple URL input.
 - **Video Upload**: Upload local video files directly to your library with automatic thumbnail generation.
 - **TMDB Metadata Scraping**: Automatically scrape movie and TV show metadata (title, description, poster, director, year, rating) from TMDB based on filename. Supports localized content matching your site language.
 - **Parallel Downloads**: Queue multiple downloads and track their progress simultaneously.
