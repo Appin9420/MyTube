@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Feat
+
+- Add video recycle bin: manual deletes move videos to trash for 7 days with restore and permanent-delete options on the Manage page, expired entries are purged automatically
+
 ### Fix
 
 - Gate static and cloud media routes behind authentication when login is enabled, and enforce visitor visibility per-file as defense-in-depth (GHSA-rwwf-29mq-5j43, GHSA-hcm6-w6x8-6jhr)

@@ -14,6 +14,7 @@ import { useState } from 'react';
 import ConfirmationModal from '../components/ConfirmationModal';
 import DeleteCollectionModal from '../components/DeleteCollectionModal';
 import CollectionsTable from '../components/ManagePage/CollectionsTable';
+import { TrashPanel } from '../components/ManagePage/TrashPanel';
 import VideosTable from '../components/ManagePage/VideosTable';
 import { api } from '../utils/apiClient';
 
@@ -361,6 +362,13 @@ const ManagePage: React.FC = () => {
                         id="manage-tab-1"
                         aria-controls="manage-tabpanel-1"
                     />
+                    {!isVisitor && (
+                        <Tab
+                            label="回收站"
+                            id="manage-tab-2"
+                            aria-controls="manage-tabpanel-2"
+                        />
+                    )}
                 </Tabs>
                 <Button
                     variant="outlined"
@@ -433,6 +441,14 @@ const ManagePage: React.FC = () => {
                         onUpdateVideo={updateVideo}
                     />
                 )}
+            </div>
+            <div
+                role="tabpanel"
+                hidden={tabValue !== 2}
+                id="manage-tabpanel-2"
+                aria-labelledby="manage-tab-2"
+            >
+                {tabValue === 2 && <TrashPanel />}
             </div>
         </Container>
     );

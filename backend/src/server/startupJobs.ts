@@ -27,6 +27,23 @@ export const startBackgroundJobs = (port: number): void => {
       );
     });
 
+  // Recycle bin retention: permanently remove trash entries older than 7 days.
+  import("../services/storageService/videoTrash")
+    .then(({ purgeExpiredTrash }) => {
+      const purged = purgeExpiredTrash();
+      if (purged > 0) {
+        logger.info(
+          `Recycle bin: purged ${purged} expired trash entr${purged === 1 ? "y" : "ies"}`
+        );
+      }
+    })
+    .catch((error) => {
+      logger.error(
+        "Failed to purge expired trash:",
+        error instanceof Error ? error : new Error(String(error))
+      );
+    });
+
   // Statistics rollup + retention workers and the alert dispatch loop.
   import("../services/statistics")
     .then((statistics) => {

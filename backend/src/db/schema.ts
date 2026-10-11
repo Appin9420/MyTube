@@ -375,3 +375,12 @@ export const usageStatisticsIngestionMinutes = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   }
 );
+
+export const videoTrash = sqliteTable("video_trash", {
+  id: text("id").primaryKey(),
+  videoId: text("video_id").notNull(),
+  title: text("title").notNull(),
+  payload: text("payload").notNull(),
+  files: text("files").notNull(),
+  deletedAt: integer("deleted_at").notNull(),
+});

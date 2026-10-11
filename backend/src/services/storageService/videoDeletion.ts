@@ -1,14 +1,17 @@
 import { eq } from "drizzle-orm";
+import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import {
   AVATARS_DIR,
   IMAGES_DIR,
   SUBTITLES_DIR,
+  TRASH_DIR,
   UPLOADS_DIR,
   VIDEOS_DIR,
 } from "../../config/paths";
 import { db } from "../../db";
-import { videos } from "../../db/schema";
+import { videoTrash, videos } from "../../db/schema";
 import { DatabaseError } from "../../errors/DownloadErrors";
 import { resolveManagedWebPath } from "../filenameTemplate/pathHelpers";
 import { removeMediaServerArtifactsForVideo } from "../mediaServerExport";
@@ -41,6 +44,19 @@ export function deleteVideo(
 
     const allCollections = getCollections();
 
+    // Manual deletes go to the recycle bin: managed artifacts are moved to
+    // the trash directory and the row leaves the library. Restoring brings
+    // everything back. Automated cleanups stay permanent.
+    if (reason === "manual" && isLocalManagedVideo(videoToDelete)) {
+      const entryId = moveToTrash(videoToDelete, allCollections);
+      if (entryId) {
+        finalizeLibraryRemoval(id, videoToDelete, reason);
+        return true;
+      }
+      // Trash move failed (or nothing was on disk) — fall through to the
+      // permanent path so dead rows are still cleaned up.
+    }
+
     // Remove video file
     deleteVideoFile(videoToDelete, allCollections);
 
@@ -53,47 +69,7 @@ export function deleteVideo(
     // Remove subtitle files
     deleteSubtitleFiles(videoToDelete, allCollections);
 
-    const deletedAt = Date.now();
-
-    // Mark download tracking and history as deleted
-    markVideoDownloadDeleted(id);
-    markDownloadHistoryDeletedByVideoId(id, deletedAt);
-
-    // Delete from DB
-    db.delete(videos).where(eq(videos.id, id)).run();
-    removeMediaServerArtifactsForVideo(videoToDelete, {
-      libraryVideos: getVideos(),
-    });
-
-    // Statistics: emit library_video_deleted with the reason bucket and a size
-    // snapshot if known. Best-effort; never blocks the delete.
-    try {
-      // Lazy require to avoid import cycles between storageService and statistics.
-      const { recordEvent } = require("../statistics") as {
-        recordEvent: (input: any) => string | null;
-      };
-      const fileSizeBytes =
-        videoToDelete.fileSize !== undefined && videoToDelete.fileSize !== null
-          ? Number(videoToDelete.fileSize) || 0
-          : 0;
-      recordEvent({
-        eventType: "library_video_deleted",
-        actorRole: reason === "retention" ? "system" : "system",
-        surface: "background",
-        videoId: id,
-        platform:
-          typeof videoToDelete.source === "string"
-            ? videoToDelete.source.toLowerCase()
-            : null,
-        payload: {
-          reason,
-          videoTitle: videoToDelete.title,
-          fileSizeBytes,
-        },
-      });
-    } catch {
-      // statistics is best-effort
-    }
+    finalizeLibraryRemoval(id, videoToDelete, reason);
     return true;
   } catch (error) {
     logger.error(
@@ -106,6 +82,232 @@ export function deleteVideo(
       "deleteVideo"
     );
   }
+}
+
+function finalizeLibraryRemoval(
+  id: string,
+  videoToDelete: import("./types").Video,
+  reason: "manual" | "retention" | "maintenance"
+): void {
+  const deletedAt = Date.now();
+
+  // Mark download tracking and history as deleted
+  markVideoDownloadDeleted(id);
+  markDownloadHistoryDeletedByVideoId(id, deletedAt);
+
+  // Delete from DB
+  db.delete(videos).where(eq(videos.id, id)).run();
+  removeMediaServerArtifactsForVideo(videoToDelete, {
+    libraryVideos: getVideos(),
+  });
+
+  // Statistics: emit library_video_deleted with the reason bucket and a size
+  // snapshot if known. Best-effort; never blocks the delete.
+  try {
+    // Lazy require to avoid import cycles between storageService and statistics.
+    const { recordEvent } = require("../statistics") as {
+      recordEvent: (input: any) => string | null;
+    };
+    const fileSizeBytes =
+      videoToDelete.fileSize !== undefined && videoToDelete.fileSize !== null
+        ? Number(videoToDelete.fileSize) || 0
+        : 0;
+    recordEvent({
+      eventType: "library_video_deleted",
+      actorRole: reason === "retention" ? "system" : "system",
+      surface: "background",
+      videoId: id,
+      platform:
+        typeof videoToDelete.source === "string"
+          ? videoToDelete.source.toLowerCase()
+          : null,
+      payload: {
+        reason,
+        videoTitle: videoToDelete.title,
+        fileSizeBytes,
+      },
+    });
+  } catch {
+    // statistics is best-effort
+  }
+}
+
+export type ResolvedManagedArtifacts = {
+  videoPath: string | null;
+  thumbnailPath: string | null;
+  subtitlePaths: string[];
+};
+
+// Mirrors the resolution chains of deleteVideoFile / deleteThumbnailFile /
+// deleteSubtitleFiles, but only LOCATES the managed artifacts without
+// deleting anything. Used by the recycle bin (move to trash).
+export function resolveExistingManagedArtifacts(
+  video: import("./types").Video,
+  allCollections: import("./types").Collection[]
+): ResolvedManagedArtifacts {
+  const artifacts: ResolvedManagedArtifacts = {
+    videoPath: null,
+    thumbnailPath: null,
+    subtitlePaths: [],
+  };
+
+  if (isLocalManagedVideo(video)) {
+    const resolved = video.videoPath
+      ? resolveManagedWebPath(video.videoPath)
+      : null;
+    if (resolved && pathExists(resolved.absolutePath)) {
+      artifacts.videoPath = resolved.absolutePath;
+    } else if (video.videoFilename) {
+      const matches = findVideoFilesByFilename(video.videoFilename);
+      if (matches.length === 1 && pathExists(matches[0])) {
+        artifacts.videoPath = matches[0];
+      }
+    }
+    if (!artifacts.videoPath && video.videoFilename) {
+      const legacy = findVideoFile(video.videoFilename, allCollections);
+      if (legacy && pathExists(legacy)) {
+        artifacts.videoPath = legacy;
+      }
+    }
+  }
+
+  if (
+    video.thumbnailFilename &&
+    !isThumbnailReferencedByOtherVideo(video, video.id)
+  ) {
+    let thumbnailPath: string | null = null;
+    if (video.thumbnailPath) {
+      if (video.thumbnailPath.startsWith("/videos/")) {
+        const p = buildStoragePath(
+          VIDEOS_DIR,
+          video.thumbnailPath.replace(/^\/videos\//, "")
+        );
+        if (pathExists(p)) thumbnailPath = p;
+      } else if (video.thumbnailPath.startsWith("/images/")) {
+        const p = buildStoragePath(
+          UPLOADS_DIR,
+          video.thumbnailPath.replace(/^\//, "")
+        );
+        if (pathExists(p)) thumbnailPath = p;
+      }
+    }
+    if ((!thumbnailPath || !pathExists(thumbnailPath)) && video.videoFilename) {
+      const videoPath = findVideoFile(video.videoFilename, allCollections);
+      if (videoPath) {
+        const p = buildStoragePath(
+          path.dirname(videoPath),
+          video.thumbnailFilename
+        );
+        if (pathExists(p)) thumbnailPath = p;
+      }
+    }
+    if ((!thumbnailPath || !pathExists(thumbnailPath)) && video.thumbnailFilename) {
+      const p = findImageFile(video.thumbnailFilename, allCollections);
+      if (p && pathExists(p)) thumbnailPath = p;
+    }
+    artifacts.thumbnailPath = thumbnailPath;
+  }
+
+  if (video.subtitles && video.subtitles.length > 0) {
+    for (const subtitle of video.subtitles) {
+      let subtitlePath =
+        subtitle.path && typeof subtitle.path === "string"
+          ? resolveManagedWebPath(subtitle.path)?.absolutePath ?? null
+          : null;
+
+      if ((!subtitlePath || !pathExists(subtitlePath)) && video.videoFilename) {
+        const videoPath = findVideoFile(video.videoFilename, allCollections);
+        if (videoPath) {
+          const p = buildStoragePath(
+            path.dirname(videoPath),
+            subtitle.filename
+          );
+          if (pathExists(p)) subtitlePath = p;
+        }
+      }
+
+      if ((!subtitlePath || !pathExists(subtitlePath)) && subtitle.filename) {
+        const p = buildStoragePath(SUBTITLES_DIR, subtitle.filename);
+        if (pathExists(p)) subtitlePath = p;
+      }
+
+      if (subtitlePath && pathExists(subtitlePath)) {
+        artifacts.subtitlePaths.push(subtitlePath);
+      }
+    }
+  }
+
+  return artifacts;
+}
+
+export type TrashMove = { from: string; to: string };
+
+// Moves the video's managed artifacts into the trash directory and records a
+// video_trash row. Returns the trash entry id, or null when there was
+// nothing on disk to move (the caller then falls back to permanent delete).
+export function moveToTrash(
+  video: import("./types").Video,
+  allCollections: import("./types").Collection[]
+): string | null {
+  const artifacts = resolveExistingManagedArtifacts(video, allCollections);
+  const moves: TrashMove[] = [];
+  const entryId = randomUUID();
+  const entryDir = path.join(TRASH_DIR, entryId);
+
+  const targets: Array<[string | null, string]> = [
+    [artifacts.videoPath, "video"],
+    [artifacts.thumbnailPath, "thumbnail"],
+    ...artifacts.subtitlePaths.map(
+      (p, index) => [p, `subtitle-${index}`] as [string, string]
+    ),
+  ];
+
+  fs.mkdirSync(entryDir, { recursive: true });
+  for (const [from, kind] of targets) {
+    if (!from || !pathExists(from)) continue;
+    const to = path.join(entryDir, kind + path.extname(from));
+    fs.renameSync(from, to);
+    moves.push({ from, to });
+  }
+
+  if (moves.length === 0) {
+    fs.rmdirSync(entryDir, { recursive: true });
+    return null;
+  }
+
+  try {
+    db.insert(videoTrash)
+      .values({
+        id: entryId,
+        videoId: video.id,
+        title: video.title,
+        payload: JSON.stringify(video),
+        files: JSON.stringify(moves),
+        deletedAt: Date.now(),
+      })
+      .run();
+  } catch (error) {
+    // Roll the files back out of the trash so nothing is lost.
+    for (const move of moves) {
+      try {
+        fs.mkdirSync(path.dirname(move.from), { recursive: true });
+        fs.renameSync(move.to, move.from);
+      } catch {
+        /* best effort rollback */
+      }
+    }
+    fs.rmSync(entryDir, { recursive: true, force: true });
+    throw new DatabaseError(
+      `Failed to record trash entry for video: ${video.id}`,
+      error instanceof Error ? error : new Error(String(error)),
+      "moveToTrash"
+    );
+  }
+
+  logger.info(
+    `Video moved to recycle bin: ${video.title} (trash entry ${entryId}, ${moves.length} file(s))`
+  );
+  return entryId;
 }
 
 function isLocalManagedVideo(

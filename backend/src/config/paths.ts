@@ -14,6 +14,7 @@ export const CLOUD_THUMBNAIL_CACHE_DIR: string = path.join(
   "cloud-thumbnail-cache"
 );
 export const DATA_DIR: string = path.join(ROOT_DIR, "data");
+export const TRASH_DIR: string = path.join(UPLOADS_DIR, ".trash");
 export const COOKIES_FILENAME = "cookies.txt";
 
 export const VIDEOS_DATA_PATH: string = path.join(DATA_DIR, "videos.json");

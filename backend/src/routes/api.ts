@@ -10,6 +10,7 @@ import * as subscriptionController from "../controllers/subscriptionController";
 import * as systemController from "../controllers/systemController";
 import * as videoController from "../controllers/videoController";
 import * as videoDownloadController from "../controllers/videoDownloadController";
+import * as videoTrashController from "../controllers/videoTrashController";
 import * as videoMetadataController from "../controllers/videoMetadataController";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAdmin } from "../middleware/requireAdmin";
@@ -57,6 +58,21 @@ const apiRouteDefinitions: ApiRouteDefinition[] = [
     path: "/videos",
     allowApiKey: true,
     handlers: [asyncHandler(videoController.getVideos)],
+  },
+  {
+    method: "get",
+    path: "/trash",
+    handlers: [asyncHandler(videoTrashController.listTrash)],
+  },
+  {
+    method: "post",
+    path: "/trash/:id/restore",
+    handlers: [asyncHandler(videoTrashController.restoreTrashItem)],
+  },
+  {
+    method: "delete",
+    path: "/trash/:id",
+    handlers: [asyncHandler(videoTrashController.purgeTrashItem)],
   },
   {
     method: "get",
