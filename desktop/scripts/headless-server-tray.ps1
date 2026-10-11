@@ -1,4 +1,4 @@
-# MyTube headless backend tray app.
+﻿# MyTube headless backend tray app.
 # Runs at user logon via scheduled task "MyTubeHeadlessServer". Shows a tray
 # icon, keeps the bundled backend alive, and stands down automatically while
 # the desktop app owns port 5551 (its lifecycle hands the task /end //run).
@@ -145,15 +145,14 @@ $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 3000
 $timer.Add_Tick({
   try {
-    $busy = Test-PortBusy
+    # OUR process alive: leave it alone, whether it is booting or serving.
+    # (Never key off the port here — the backend binds ~60s after start, and
+    # killing on "port busy" would murder our own freshly-started backend.)
     $procAlive = ($script:Proc -ne $null -and -not $script:Proc.HasExited)
-
-    if ($busy) {
-      # Desktop app (or anything else) owns the port: stand by, no backend.
-      if ($procAlive) { Stop-Backend }
-      $notifyIcon.Icon = $script:IconGray
-      $itemStatus.Text = '服务状态：由桌面版运行中'
-      $notifyIcon.Text = 'MyTube - 由桌面版运行'
+    if ($procAlive) {
+      $notifyIcon.Icon = $script:IconGreen
+      $itemStatus.Text = '服务状态：运行中'
+      $notifyIcon.Text = 'MyTube - 运行中'
       return
     }
 
@@ -164,10 +163,11 @@ $timer.Add_Tick({
       return
     }
 
-    if ($procAlive) {
-      $notifyIcon.Icon = $script:IconGreen
-      $itemStatus.Text = '服务状态：运行中'
-      $notifyIcon.Text = 'MyTube - 运行中'
+    if (Test-PortBusy) {
+      # Nothing of ours running, but the port is served (desktop app): stand by.
+      $notifyIcon.Icon = $script:IconGray
+      $itemStatus.Text = '服务状态：由桌面版运行中'
+      $notifyIcon.Text = 'MyTube - 由桌面版运行'
       return
     }
 
