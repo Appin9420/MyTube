@@ -65,13 +65,24 @@ export function initializeStorage(): void {
     }
   }
 
-  // Clean up active downloads from database on startup
+  // Rows still marked active at startup are stale only when the previous
+  // process died without a graceful shutdown. Convert them to paused - keeping
+  // the progress snapshot and real filename - instead of deleting them, so a
+  // hard-killed download resumes from its breakpoint instead of vanishing.
   try {
-    db.delete(downloads).where(eq(downloads.status, "active")).run();
-    logger.info("Cleared active downloads from database on startup");
+    const converted = db
+      .update(downloads)
+      .set({ status: "paused" })
+      .where(eq(downloads.status, "active"))
+      .run();
+    if (converted.changes > 0) {
+      logger.info(
+        `Converted ${converted.changes} stale active download(s) to paused on startup`,
+      );
+    }
   } catch (error) {
     logger.error(
-      "Error clearing active downloads from database",
+      "Error converting stale active downloads to paused",
       error instanceof Error ? error : new Error(String(error))
     );
   }

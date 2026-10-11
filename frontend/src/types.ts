@@ -51,6 +51,7 @@ export interface DownloadInfo {
   filename?: string;
   sourceUrl?: string;
   type?: string;
+  phase?: string;
 }
 
 export interface Comment {
@@ -119,6 +120,7 @@ export interface Settings {
   cloudflaredToken?: string;
   allowedHosts?: string;
   pauseOnFocusLoss?: boolean;
+  autoShutdownEnabled?: boolean;
   hooks?: {
     task_before_start?: string;
     task_success?: string;

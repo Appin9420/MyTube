@@ -59,11 +59,13 @@ export interface RenameFilesOptions {
 /**
  * Create a temporary directory for download
  */
-export function createTempDir(): string {
-  const tempDir = resolveSafeChildPath(
-    VIDEOS_DIR,
-    `temp_${Date.now()}_${crypto.randomUUID()}`
-  );
+export function createTempDir(downloadId?: string): string {
+  // Key the temp dir by download id so a paused download resumes into the
+  // same directory and yt-dlp can continue its .part file.
+  const dirName = downloadId
+    ? `temp_download_${downloadId.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+    : `temp_${Date.now()}_${crypto.randomUUID()}`;
+  const tempDir = resolveSafeChildPath(VIDEOS_DIR, dirName);
   ensureDirSafeSync(tempDir, VIDEOS_DIR);
   logger.info("Created temp directory:", tempDir);
   return tempDir;

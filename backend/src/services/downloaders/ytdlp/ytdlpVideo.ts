@@ -1,11 +1,17 @@
 import fs from "fs-extra";
 import path from "path";
 import { AVATARS_DIR, IMAGES_DIR, SUBTITLES_DIR, VIDEOS_DIR } from "../../../config/paths";
-import { ValidationError } from "../../../errors/DownloadErrors";
+import {
+  DownloadPausedError,
+  isPausedError,
+  ValidationError,
+  type DownloadStopReason,
+} from "../../../errors/DownloadErrors";
 import { downloadAndProcessAvatar } from "../../../utils/avatarUtils";
 import {
   cleanupSubtitleFiles,
   cleanupVideoArtifacts,
+  resolveResumableVideoPath,
 } from "../../../utils/downloadUtils";
 import {
   extractTwitchVideoId,
@@ -104,6 +110,52 @@ function createYtDlpOutputTemplate(outputPath: string): string {
   return resolveSafeChildPath(outputDir, `${outputFilename}.%(ext)s`);
 }
 
+/**
+ * Compute the output-path plan for a resumed download that reuses its previous
+ * file name. The video path is kept exactly as-is so yt-dlp finds the existing
+ * .part/.ytdl artifacts; the thumbnail mirrors the video stem. No
+ * dedupe/collision suffix is ever produced here — renaming the output would
+ * orphan the partial artifacts and restart the download from zero.
+ * Exported for tests only.
+ */
+export function buildResumedOutputPlan(
+  resumedPath: string,
+  thumbnailBaseDir: string,
+  videosDir: string
+): {
+  videoPath: string;
+  finalVideoFilename: string;
+  safeBaseFilename: string;
+  thumbnailPath: string;
+  finalThumbnailFilename: string;
+  videoRelativePosix: string;
+} {
+  const finalVideoFilename = path.basename(resumedPath);
+  const safeBaseFilename = stripTrailingExtension(
+    finalVideoFilename,
+    path.extname(finalVideoFilename)
+  );
+  const videoRelativePosix = path
+    .relative(videosDir, resumedPath)
+    .split(path.sep)
+    .join("/");
+  const thumbnailRelativePosix = `${stripTrailingExtension(
+    videoRelativePosix,
+    path.extname(videoRelativePosix)
+  )}.jpg`;
+  return {
+    videoPath: resumedPath,
+    finalVideoFilename,
+    safeBaseFilename,
+    thumbnailPath: resolveSafeChildPath(
+      thumbnailBaseDir,
+      thumbnailRelativePosix
+    ),
+    finalThumbnailFilename: path.basename(thumbnailRelativePosix),
+    videoRelativePosix,
+  };
+}
+
 function pathExistsWithAnyKnownVideoExtension(basePath: string): boolean {
   return VIDEO_CONTAINER_EXTENSIONS.some((extension) =>
     pathExistsSafeSync(`${basePath}${extension}`, VIDEOS_DIR)
@@ -138,7 +190,8 @@ export async function downloadVideo(
   videoUrl: string,
   downloadId?: string,
   onStart?: (cancel: () => void) => void,
-  filenameTemplateSourceOptions?: import("../../filenameTemplate/types").FilenameTemplateSourceOptions
+  filenameTemplateSourceOptions?: import("../../filenameTemplate/types").FilenameTemplateSourceOptions,
+  resumeOutputPath?: string
 ): Promise<Video> {
   logger.info("Detected URL:", videoUrl);
 
@@ -166,6 +219,7 @@ export async function downloadVideo(
   let subtitles: Array<{ language: string; filename: string; path: string }> =
     [];
   let rawSourceInfo: Record<string, unknown> | null = null;
+  let stopReason: DownloadStopReason | undefined;
   // These are set inside the try block but also referenced after it
   let newVideoPathWithFormat = resolveSafeChildPath(VIDEOS_DIR, videoFilename);
   let newThumbnailPath = resolveSafeChildPath(IMAGES_DIR, thumbnailFilename);
@@ -268,10 +322,11 @@ export async function downloadVideo(
     });
 
     if (downloadId) {
+      // Note: no progress reset here. On resume the manager pre-writes the
+      // paused snapshot's progress into the active row and the ProgressTracker
+      // stitches it forward; writing progress: 0 would wipe the snapshot.
       storageService.updateActiveDownload(downloadId, {
         title: videoTitle,
-        filename: videoTitle,
-        progress: 0,
       });
     }
 
@@ -299,132 +354,173 @@ export async function downloadVideo(
       );
     }
 
-    // Plan output paths using the template planner
-    if (downloadFilenamePresetId !== "legacy") {
-      // Non-legacy: use template planner
-      const sourceOptions = enrichSourceOptionsForDownload(
-        {
-          ...filenameTemplateSourceOptions,
-          sourceCollectionType:
-            filenameTemplateSourceOptions?.sourceCollectionType ?? "single",
-        },
-        {
-          author: videoAuthor || info.uploader || info.channel,
-          uploadDate: videoDate,
-        }
-      );
-      const context = buildContextFromYtDlpInfo(videoUrl, info, {
-        ...sourceOptions,
-      });
-      const planned = planVideoOutputPaths({
-        settings,
-        context,
-        videoExtension,
-        thumbnailExtension: "jpg",
-        moveThumbnailsToVideoFolder,
-        moveSubtitlesToVideoFolder,
-      });
-
-      // Deduplicate
-      const dedupedRelative = dedupeRelativePath(
-        planned.video.relativePath,
-        VIDEOS_DIR,
-        new Set()
-      );
-      const stemChanged = dedupedRelative !== planned.video.relativePath;
-      const suffix = stemChanged
-        ? dedupedRelative.slice(
-            planned.video.basenameWithoutExt.length +
-              (planned.video.relativePath.lastIndexOf("/") >= 0
-                ? planned.video.relativePath.lastIndexOf("/") + 1
-                : 0),
-            dedupedRelative.lastIndexOf(".")
-          )
-        : "";
-      const preferredVideoExt = path.extname(dedupedRelative);
-      const videoBaseRelative = stripTrailingExtension(
-        dedupedRelative,
-        preferredVideoExt
-      );
-      let finalVideoRelative = dedupedRelative;
-      let collisionSuffix = "";
-      let counter = 1;
-      while (
-        pathExistsWithAnyKnownVideoExtension(
-          resolveSafeChildPath(VIDEOS_DIR, `${videoBaseRelative}${collisionSuffix}`)
-        )
-      ) {
-        collisionSuffix = `_${counter}`;
-        finalVideoRelative =
-          `${videoBaseRelative}${collisionSuffix}${preferredVideoExt}`;
-        counter++;
-      }
-
-      newVideoPathWithFormat = resolveSafeChildPath(VIDEOS_DIR, finalVideoRelative);
-      finalVideoFilename = path.basename(finalVideoRelative);
-      newSafeBaseFilename =
-        `${planned.video.basenameWithoutExt}${suffix}${collisionSuffix}`;
-
-      // Thumbnail
-      const thumbBase = planned.thumbnail.filename.replace(
-        /\.jpg$/,
-        `${suffix}${collisionSuffix}.jpg`
-      );
-      const thumbDir = path.dirname(planned.thumbnail.relativePath);
-      const thumbRelative =
-        thumbDir && thumbDir !== "." ? `${thumbDir}/${thumbBase}` : thumbBase;
-      newThumbnailPath = resolveSafeChildPath(
+    // Plan output paths: first try to reuse the paused download's previous
+    // output path so yt-dlp finds its existing .part/.ytdl artifacts; only
+    // fall back to fresh planning when nothing is resumable on disk.
+    const resumedPath = resolveResumableVideoPath(resumeOutputPath);
+    let resumeApplied = false;
+    if (resumedPath) {
+      // Reuse means the old name's partial artifacts are still on disk — the
+      // template/dedupe/collision-suffix logic below must never run, since a
+      // renamed output would orphan the artifacts and restart from zero.
+      const resumedPlan = buildResumedOutputPlan(
+        resumedPath,
         moveThumbnailsToVideoFolder ? VIDEOS_DIR : IMAGES_DIR,
-        thumbRelative
+        VIDEOS_DIR
       );
-      finalThumbnailFilename = thumbBase;
-
-      logger.info("Preparing video download path (template):", newVideoPathWithFormat);
-    } else {
-      // Legacy: use formatVideoFilename
-      newSafeBaseFilename = formatVideoFilename(
-        videoTitle,
-        videoAuthor,
-        videoDate
+      newVideoPathWithFormat = resumedPlan.videoPath;
+      finalVideoFilename = resumedPlan.finalVideoFilename;
+      newSafeBaseFilename = resumedPlan.safeBaseFilename;
+      newThumbnailPath = resumedPlan.thumbnailPath;
+      finalThumbnailFilename = resumedPlan.finalThumbnailFilename;
+      // The previous output may live in a template subdirectory that no
+      // longer exists on disk; recreate it before yt-dlp writes there.
+      fs.ensureDirSync(path.dirname(resumedPlan.videoPath));
+      logger.info(
+        `Resuming download at existing output path: ${resumedPlan.videoRelativePosix}`
       );
-      const newVideoFilename = `${newSafeBaseFilename}.${videoExtension}`;
-      const newThumbnailFilename = `${newSafeBaseFilename}.jpg`;
+      resumeApplied = true;
+    }
 
-      finalVideoFilename = newVideoFilename;
-      finalThumbnailFilename = newThumbnailFilename;
+    if (!resumeApplied) {
+      if (downloadFilenamePresetId !== "legacy") {
+        // Non-legacy: use template planner
+        const sourceOptions = enrichSourceOptionsForDownload(
+          {
+            ...filenameTemplateSourceOptions,
+            sourceCollectionType:
+              filenameTemplateSourceOptions?.sourceCollectionType ?? "single",
+          },
+          {
+            author: videoAuthor || info.uploader || info.channel,
+            uploadDate: videoDate,
+          }
+        );
+        const context = buildContextFromYtDlpInfo(videoUrl, info, {
+          ...sourceOptions,
+        });
+        const planned = planVideoOutputPaths({
+          settings,
+          context,
+          videoExtension,
+          thumbnailExtension: "jpg",
+          moveThumbnailsToVideoFolder,
+          moveSubtitlesToVideoFolder,
+        });
 
-      newVideoPathWithFormat = resolveSafeChildPath(VIDEOS_DIR, finalVideoFilename);
-      newThumbnailPath = moveThumbnailsToVideoFolder
-        ? resolveSafeChildPath(VIDEOS_DIR, finalThumbnailFilename)
-        : resolveSafeChildPath(IMAGES_DIR, finalThumbnailFilename);
-
-      // If file already exists (e.g. redownload), deduplicate the filename
-      if (
-        pathExistsSafeSync(newVideoPathWithFormat, VIDEOS_DIR) ||
-        pathExistsWithAnyKnownVideoExtension(
-          stripTrailingExtension(newVideoPathWithFormat, `.${videoExtension}`)
-        )
-      ) {
+        // Deduplicate
+        const dedupedRelative = dedupeRelativePath(
+          planned.video.relativePath,
+          VIDEOS_DIR,
+          new Set()
+        );
+        const stemChanged = dedupedRelative !== planned.video.relativePath;
+        const suffix = stemChanged
+          ? dedupedRelative.slice(
+              planned.video.basenameWithoutExt.length +
+                (planned.video.relativePath.lastIndexOf("/") >= 0
+                  ? planned.video.relativePath.lastIndexOf("/") + 1
+                  : 0),
+              dedupedRelative.lastIndexOf(".")
+            )
+          : "";
+        const preferredVideoExt = path.extname(dedupedRelative);
+        const videoBaseRelative = stripTrailingExtension(
+          dedupedRelative,
+          preferredVideoExt
+        );
+        let finalVideoRelative = dedupedRelative;
+        let collisionSuffix = "";
         let counter = 1;
-        const ext = `.${videoExtension}`;
-        const basePath = stripTrailingExtension(newVideoPathWithFormat, ext);
-        const baseName = stripTrailingExtension(finalVideoFilename, ext);
-        while (pathExistsWithAnyKnownVideoExtension(`${basePath}_${counter}`)) {
+        while (
+          pathExistsWithAnyKnownVideoExtension(
+            resolveSafeChildPath(VIDEOS_DIR, `${videoBaseRelative}${collisionSuffix}`)
+          )
+        ) {
+          collisionSuffix = `_${counter}`;
+          finalVideoRelative =
+            `${videoBaseRelative}${collisionSuffix}${preferredVideoExt}`;
           counter++;
         }
-        newVideoPathWithFormat = `${basePath}_${counter}${ext}`;
-        finalVideoFilename = `${baseName}_${counter}${ext}`;
-        finalThumbnailFilename = finalThumbnailFilename.replace(
+
+        newVideoPathWithFormat = resolveSafeChildPath(VIDEOS_DIR, finalVideoRelative);
+        finalVideoFilename = path.basename(finalVideoRelative);
+        newSafeBaseFilename =
+          `${planned.video.basenameWithoutExt}${suffix}${collisionSuffix}`;
+
+        // Thumbnail
+        const thumbBase = planned.thumbnail.filename.replace(
           /\.jpg$/,
-          `_${counter}.jpg`
+          `${suffix}${collisionSuffix}.jpg`
         );
+        const thumbDir = path.dirname(planned.thumbnail.relativePath);
+        const thumbRelative =
+          thumbDir && thumbDir !== "." ? `${thumbDir}/${thumbBase}` : thumbBase;
+        newThumbnailPath = resolveSafeChildPath(
+          moveThumbnailsToVideoFolder ? VIDEOS_DIR : IMAGES_DIR,
+          thumbRelative
+        );
+        finalThumbnailFilename = thumbBase;
+
+        logger.info("Preparing video download path (template):", newVideoPathWithFormat);
+      } else {
+        // Legacy: use formatVideoFilename
+        newSafeBaseFilename = formatVideoFilename(
+          videoTitle,
+          videoAuthor,
+          videoDate
+        );
+        const newVideoFilename = `${newSafeBaseFilename}.${videoExtension}`;
+        const newThumbnailFilename = `${newSafeBaseFilename}.jpg`;
+
+        finalVideoFilename = newVideoFilename;
+        finalThumbnailFilename = newThumbnailFilename;
+
+        newVideoPathWithFormat = resolveSafeChildPath(VIDEOS_DIR, finalVideoFilename);
         newThumbnailPath = moveThumbnailsToVideoFolder
           ? resolveSafeChildPath(VIDEOS_DIR, finalThumbnailFilename)
           : resolveSafeChildPath(IMAGES_DIR, finalThumbnailFilename);
-        logger.info(`File exists, using deduplicated filename: ${finalVideoFilename}`);
-      }
 
-      logger.info("Preparing video download path:", newVideoPathWithFormat);
+        // If file already exists (e.g. redownload), deduplicate the filename
+        if (
+          pathExistsSafeSync(newVideoPathWithFormat, VIDEOS_DIR) ||
+          pathExistsWithAnyKnownVideoExtension(
+            stripTrailingExtension(newVideoPathWithFormat, `.${videoExtension}`)
+          )
+        ) {
+          let counter = 1;
+          const ext = `.${videoExtension}`;
+          const basePath = stripTrailingExtension(newVideoPathWithFormat, ext);
+          const baseName = stripTrailingExtension(finalVideoFilename, ext);
+          while (pathExistsWithAnyKnownVideoExtension(`${basePath}_${counter}`)) {
+            counter++;
+          }
+          newVideoPathWithFormat = `${basePath}_${counter}${ext}`;
+          finalVideoFilename = `${baseName}_${counter}${ext}`;
+          finalThumbnailFilename = finalThumbnailFilename.replace(
+            /\.jpg$/,
+            `_${counter}.jpg`
+          );
+          newThumbnailPath = moveThumbnailsToVideoFolder
+            ? resolveSafeChildPath(VIDEOS_DIR, finalThumbnailFilename)
+            : resolveSafeChildPath(IMAGES_DIR, finalThumbnailFilename);
+          logger.info(`File exists, using deduplicated filename: ${finalVideoFilename}`);
+        }
+
+        logger.info("Preparing video download path:", newVideoPathWithFormat);
+      }
+    }
+
+    // Persist the actual output path (relative to VIDEOS_DIR, posix
+    // separators) so a later pause/resume can find the same file name and its
+    // .part/.ytdl artifacts instead of re-planning a drifted one.
+    if (downloadId) {
+      storageService.updateActiveDownload(downloadId, {
+        filename: path
+          .relative(VIDEOS_DIR, newVideoPathWithFormat)
+          .split(path.sep)
+          .join("/"),
+      });
     }
 
     // Update output path in flags
@@ -438,9 +534,15 @@ export async function downloadVideo(
     const subprocess = executeYtDlpSpawn(videoUrl, flags);
 
     if (onStart) {
-      onStart(async () => {
+      onStart(async (reason?: DownloadStopReason) => {
+        stopReason = reason ?? "cancel";
         logger.info("Killing subprocess for download:", downloadId);
         subprocess.kill();
+
+        // On pause, keep .part/.ytdl artifacts so the download can resume.
+        if (stopReason === "pause") {
+          return;
+        }
 
         // Clean up partial files
         logger.info("Cleaning up partial files...");
@@ -467,6 +569,9 @@ export async function downloadVideo(
     try {
       await subprocess;
     } catch (error: any) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        throw DownloadPausedError.create();
+      }
       await downloader.handleCancellationErrorPublic(error, async () => {
         await cleanupVideoArtifacts(newSafeBaseFilename);
         await cleanupSubtitleFiles(newSafeBaseFilename);
@@ -508,6 +613,9 @@ export async function downloadVideo(
     try {
       downloader.throwIfCancelledPublic(downloadId);
     } catch (error) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        throw DownloadPausedError.create();
+      }
       await cleanupVideoArtifacts(newSafeBaseFilename);
       await cleanupSubtitleFiles(newSafeBaseFilename);
       throw error;
@@ -540,6 +648,9 @@ export async function downloadVideo(
     try {
       downloader.throwIfCancelledPublic(downloadId);
     } catch (error) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        throw DownloadPausedError.create();
+      }
       await cleanupSubtitleFiles(newSafeBaseFilename);
       throw error;
     }
@@ -698,6 +809,9 @@ export async function downloadVideo(
     try {
       downloader.throwIfCancelledPublic(downloadId);
     } catch (error) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        throw DownloadPausedError.create();
+      }
       await cleanupSubtitleFiles(newSafeBaseFilename);
       throw error;
     }

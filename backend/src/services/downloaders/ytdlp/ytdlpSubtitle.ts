@@ -1,5 +1,6 @@
 import path from "path";
 import { SUBTITLES_DIR, VIDEOS_DIR } from "../../../config/paths";
+import { isPausedError } from "../../../errors/DownloadErrors";
 import { cleanupSubtitleFiles } from "../../../utils/downloadUtils";
 import { logger } from "../../../utils/logger";
 import {
@@ -110,6 +111,11 @@ export async function processSubtitles(
       try {
         downloader.throwIfCancelledPublic(downloadId);
       } catch (error) {
+        // A pause must not delete the files already processed; the download
+        // resumes later and subtitle processing runs again from the source.
+        if (isPausedError(error)) {
+          throw error;
+        }
         await cleanupSubtitleFiles(baseFilename);
         throw error;
       }

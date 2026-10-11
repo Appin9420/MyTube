@@ -33,7 +33,7 @@ const ManagePage: React.FC = () => {
     const { userRole } = useAuth();
     const isVisitor = userRole === 'visitor';
     const { videos, deleteVideo, refreshThumbnail, redownloadThumbnail, uploadThumbnail, updateVideo, fetchVideos } = useVideo();
-    const { collections, deleteCollection, updateCollection } = useCollection();
+    const { collections, deleteCollection, updateCollection, mergeDuplicateCollections } = useCollection();
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [refreshingId, setRefreshingId] = useState<string | null>(null);
     const [redownloadingThumbnailIds, setRedownloadingThumbnailIds] = useState<Record<string, boolean>>({});
@@ -342,7 +342,7 @@ const ManagePage: React.FC = () => {
                 cancelText={t('cancel') || 'Cancel'}
             />
 
-            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Tabs
                     value={tabValue}
                     onChange={handleTabChange}
@@ -362,6 +362,17 @@ const ManagePage: React.FC = () => {
                         aria-controls="manage-tabpanel-1"
                     />
                 </Tabs>
+                <Button
+                    variant="outlined"
+                    size="small"
+                    sx={{ ml: 2 }}
+                    onClick={async () => {
+                        const result = await mergeDuplicateCollections();
+                        showSnackbar(result.message || (result.success ? t('mergeDone') : t('mergeFailed')), result.success ? 'success' : 'error');
+                    }}
+                >
+                    {t('mergeDuplicates')}
+                </Button>
             </Box>
 
             <div

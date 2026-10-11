@@ -293,7 +293,7 @@ describe('StorageService', () => {
       });
 
       const status = storageService.getDownloadStatus();
-      expect(status).toEqual({ activeDownloads: [], queuedDownloads: [] });
+      expect(status).toEqual({ activeDownloads: [], queuedDownloads: [], pausedDownloads: [] });
     });
   });
 

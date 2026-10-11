@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import fs from "fs-extra";
+import type { Server as HttpServer } from "http";
 import path from "path";
 import { DATA_DIR } from "./config/paths";
 import { runMigrations } from "./db/migrate";
@@ -70,8 +71,47 @@ const configureProcessCrashReports = (): void => {
   }
 };
 
-const startServer = async (): Promise<void> => {
-  try {
+// On SIGINT/SIGTERM/SIGBREAK, pause every active download (kills the yt-dlp
+// subprocesses, keeps .part/.ytdl artifacts, snapshots progress into the
+// paused store) before the process exits, so no download loses its progress.
+// A second signal forces an immediate exit.
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 8000;
+const FORCE_EXIT_TIMEOUT_MS = 3000;
+
+const registerGracefulShutdown = (server: HttpServer): void => {
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) {
+      process.exit(1);
+    }
+    shuttingDown = true;
+    logger.info(`Received ${signal}; pausing active downloads before exit...`);
+    Promise.race([
+      downloadManager.pauseAllActiveDownloadsForShutdown(),
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS),
+      ),
+    ])
+      .catch((error) => {
+        logger.error(
+          "Error while pausing downloads during shutdown:",
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      })
+      .finally(() => {
+        // Keep-alive sockets can hold server.close() open; force exit shortly
+        // after so the process never hangs on shutdown.
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), FORCE_EXIT_TIMEOUT_MS).unref();
+      });
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGBREAK", () => shutdown("SIGBREAK"));
+};
+
+const startServer = async (): Promise<void> => {  try {
     configureProcessCrashReports();
     await runMigrations();
 
@@ -97,6 +137,7 @@ const startServer = async (): Promise<void> => {
     // Register the live translation WebSocket on the same HTTP server (noServer
     // mode handles only the live translation upgrade path).
     registerLiveTranslationSocket(server);
+    registerGracefulShutdown(server);
   } catch (error) {
     logger.error(
       "Failed to start server:",

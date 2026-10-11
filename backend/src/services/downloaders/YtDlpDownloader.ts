@@ -42,7 +42,8 @@ export class YtDlpDownloader extends BaseDownloader {
       url,
       options?.downloadId,
       options?.onStart,
-      options?.filenameTemplateSourceOptions
+      options?.filenameTemplateSourceOptions,
+      options?.resumeOutputPath
     );
   }
 
@@ -51,8 +52,9 @@ export class YtDlpDownloader extends BaseDownloader {
     videoUrl: string,
     downloadId?: string,
     onStart?: (cancel: () => void) => void,
-    filenameTemplateSourceOptions?: import("../filenameTemplate/types").FilenameTemplateSourceOptions
+    filenameTemplateSourceOptions?: import("../filenameTemplate/types").FilenameTemplateSourceOptions,
+    resumeOutputPath?: string
   ): Promise<Video> {
-    return downloadVideoFromModule(videoUrl, downloadId, onStart, filenameTemplateSourceOptions);
+    return downloadVideoFromModule(videoUrl, downloadId, onStart, filenameTemplateSourceOptions, resumeOutputPath);
   }
 }

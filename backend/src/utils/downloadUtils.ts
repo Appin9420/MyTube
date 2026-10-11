@@ -13,6 +13,7 @@ import {
 } from "../config/paths";
 import {
   DownloadCancelledError,
+  DownloadPausedError,
   isAnyCancellationError,
 } from "../errors/DownloadErrors";
 import * as storageService from "../services/storageService";
@@ -50,11 +51,48 @@ export function isDownloadActive(downloadId?: string): boolean {
  * Check if download was cancelled and throw DownloadCancelledError if so
  * @param downloadId - The download ID to check
  * @throws DownloadCancelledError if download was cancelled
+ * @throws DownloadPausedError if the download was paused (paused row exists).
+ *   Pausing also removes the active row, so a bare "not active" check cannot
+ *   tell the two apart. Downloaders rely on this distinction: a pause must
+ *   keep .part/.ytdl artifacts for resume, a cancel must clean them up.
  */
 export function throwIfCancelled(downloadId?: string): void {
   if (!isDownloadActive(downloadId)) {
+    if (downloadId && storageService.getPausedDownload(downloadId)) {
+      throw DownloadPausedError.create();
+    }
     throw DownloadCancelledError.create();
   }
+}
+
+/**
+ * Resolve a paused download's stored output path (relative to the videos dir)
+ * and check whether yt-dlp resume artifacts still exist for it: the main
+ * `<file>.part`, the fragment index `<file>.ytdl`, or the final file itself.
+ * Returns the absolute video path when a resume can reuse it, else null.
+ * Never throws: a stale or malformed stored path (older paused rows stored the
+ * video title instead of a path) simply yields null and the caller plans a
+ * fresh output path.
+ */
+export function resolveResumableVideoPath(
+  resumeRelativePath?: string | null,
+  baseDir: string = VIDEOS_DIR,
+): string | null {
+  const trimmed = resumeRelativePath?.trim();
+  if (!trimmed) return null;
+  try {
+    const candidate = resolveSafeChildPath(baseDir, trimmed);
+    if (
+      pathExistsSafeSync(`${candidate}.part`, baseDir) ||
+      pathExistsSafeSync(`${candidate}.ytdl`, baseDir) ||
+      pathExistsSafeSync(candidate, baseDir)
+    ) {
+      return candidate;
+    }
+  } catch {
+    // Fall through to null; caller plans a fresh output path.
+  }
+  return null;
 }
 
 /**

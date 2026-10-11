@@ -118,10 +118,11 @@ export const downloads = sqliteTable("downloads", {
   downloadedSize: text("downloaded_size"),
   progress: integer("progress"), // Using integer for percentage (0-100) or similar
   speed: text("speed"),
-  status: text("status").notNull().default("active"), // 'active' or 'queued'
+  status: text("status").notNull().default("active"), // 'active', 'queued', or 'paused'
   sourceUrl: text("source_url"),
   type: text("type"),
   retryMetadata: text("retry_metadata"),
+  phase: text("phase"), // 'merging' while yt-dlp merges/remuxes after download
 });
 
 export const downloadHistory = sqliteTable(

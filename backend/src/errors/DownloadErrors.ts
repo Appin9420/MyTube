@@ -5,6 +5,7 @@
 
 export type DownloadErrorType =
   | "cancelled"
+  | "paused"
   | "ytdlp"
   | "subtitle"
   | "network"
@@ -58,6 +59,37 @@ export class DownloadCancelledError extends DownloadError {
     return new DownloadCancelledError();
   }
 }
+
+/**
+ * Thrown when a download is paused by the user
+ */
+export class DownloadPausedError extends DownloadError {
+  override readonly type = "paused" as const;
+
+  constructor(message: string = "Download paused by user") {
+    super("paused", message, false);
+    this.name = "DownloadPausedError";
+  }
+
+  static create(): DownloadPausedError {
+    return new DownloadPausedError();
+  }
+}
+
+/**
+ * Why a running download is being stopped by the download manager.
+ * "cancel" discards partial files; "pause" keeps them so the download can
+ * be resumed later without re-downloading completed parts.
+ */
+export type DownloadStopReason = "cancel" | "pause";
+
+/**
+ * Callback a downloader registers so the manager can stop a running download.
+ * Receives the stop reason so cleanup can be skipped when pausing.
+ */
+export type DownloadCancelCallback = (
+  reason?: DownloadStopReason
+) => void | Promise<void>;
 
 /**
  * Thrown when yt-dlp encounters an error
@@ -165,6 +197,13 @@ export function isCancelledError(
   error: unknown
 ): error is DownloadCancelledError {
   return error instanceof DownloadCancelledError;
+}
+
+/**
+ * Type guard to check if an error is a pause error
+ */
+export function isPausedError(error: unknown): error is DownloadPausedError {
+  return error instanceof DownloadPausedError;
 }
 
 /**

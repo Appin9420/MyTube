@@ -28,6 +28,7 @@ vi.mock('../../../utils/downloadUtils', () => ({
   cleanupTemporaryFiles: vi.fn().mockResolvedValue(undefined),
   safeRemove: vi.fn().mockResolvedValue(undefined),
   isCancellationError: vi.fn().mockReturnValue(false),
+  resolveResumableVideoPath: vi.fn().mockReturnValue(null),
 }));
 vi.mock('../../../utils/security', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../utils/security')>();
@@ -481,6 +482,42 @@ describe('MissAVDownloader', () => {
       await expect(downloadPromise).rejects.toThrow('Download cancelled by user');
       expect(mockChild.kill).toHaveBeenCalled();
       expect(cleanupTemporaryFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps .part files when paused instead of cleaning them up', async () => {
+      const mockPage = buildPageMock('success');
+      const mockBrowser = { newPage: vi.fn().mockResolvedValue(mockPage), close: vi.fn().mockResolvedValue(undefined) };
+      (puppeteer.launch as ReturnType<typeof vi.fn>).mockResolvedValue(mockBrowser);
+
+      let closeHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
+      const mockChild: any = {
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: vi.fn((event: string, cb: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+          if (event === 'close') closeHandler = cb;
+        }),
+        kill: vi.fn(() => {
+          closeHandler?.(null, 'SIGTERM');
+          return true;
+        }),
+      };
+      (spawn as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockChild);
+
+      let cancelDownload: ((reason?: 'cancel' | 'pause') => void | Promise<void>) | undefined;
+      const downloadPromise = MissAVDownloader.downloadVideo(
+        'https://missav.com/test-video',
+        'pause-1',
+        (cancel) => {
+          cancelDownload = cancel;
+        },
+      );
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await cancelDownload?.('pause');
+
+      await expect(downloadPromise).rejects.toThrow('Download paused by user');
+      expect(mockChild.kill).toHaveBeenCalled();
+      expect(cleanupTemporaryFiles).not.toHaveBeenCalled();
     });
 
     it('skips waitForResponse when m3u8 is captured during navigation', async () => {

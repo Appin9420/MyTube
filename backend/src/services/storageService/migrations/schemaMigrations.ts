@@ -383,6 +383,14 @@ export function migrateColumnsAndTables(): void {
       logger.info("Migration successful: retry_metadata added.");
     }
 
+    if (!downloadsColumns.includes("phase")) {
+      logger.info(
+        "Migrating database: Adding phase column to downloads table..."
+      );
+      sqlite.prepare("ALTER TABLE downloads ADD COLUMN phase TEXT").run();
+      logger.info("Migration successful: phase added.");
+    }
+
     // Check subscriptions table columns for playlist subscription fields
     migrateCollectionsAndSubscriptionsColumns();
 

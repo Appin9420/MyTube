@@ -263,6 +263,7 @@ export function createDownloadTask(
   url: string,
   downloadId: string,
   retryMetadata?: DownloadRetryMetadata | string | null,
+  resumeOutputPath?: string,
 ): (registerCancel: (cancel: () => void) => void) => Promise<any> {
   const parsedMetadata =
     typeof retryMetadata === "string"
@@ -272,8 +273,16 @@ export function createDownloadTask(
   return async (registerCancel: (cancel: () => void) => void) => {
     assertDownloadsAllowed();
     if (type === "missav") {
-      return MissAVDownloader.downloadVideo(url, downloadId, registerCancel);
+      return MissAVDownloader.downloadVideo(
+        url,
+        downloadId,
+        registerCancel,
+        undefined,
+        resumeOutputPath,
+      );
     } else if (type === "bilibili") {
+      // Bilibili resumes into a temp directory keyed by the download id, so
+      // no output path reuse is needed there.
       if (parsedMetadata) {
         return buildBilibiliDownloadTaskFromRetryMetadata(
           url,
@@ -292,7 +301,13 @@ export function createDownloadTask(
       );
     } else {
       // Default to yt-dlp
-      return YtDlpDownloader.downloadVideo(url, downloadId, registerCancel);
+      return YtDlpDownloader.downloadVideo(
+        url,
+        downloadId,
+        registerCancel,
+        undefined,
+        resumeOutputPath,
+      );
     }
   };
 }

@@ -1,11 +1,16 @@
 import {
     DownloadCancelledError,
+    DownloadPausedError,
     isCancelledError,
+    type DownloadCancelCallback,
+    type DownloadStopReason,
 } from "../errors/DownloadErrors";
 import { extractSourceVideoId } from "../utils/helpers";
 import { logger, sanitizeLogMessage } from "../utils/logger";
+import { abortPendingShutdown, notifyDownloadSettled } from "./autoShutdownService";
 import { CloudStorageService } from "./CloudStorageService";
 import { createDownloadTask } from "./downloadService";
+import { adoptOrphanResumePathByTitle } from "./downloadResumeAdoption";
 import {
   canRestoreDetachedTask,
   parseRetryMetadata,
@@ -26,7 +31,10 @@ import type {
   CanonicalSourceKind,
   StatisticsSurface,
 } from "./statistics";
-import type { DownloadHistoryItem } from "./storageService";
+import type {
+  DownloadHistoryItem,
+  DownloadInfo,
+} from "./storageService";
 import * as storageService from "./storageService";
 
 interface StatisticsAttribution {
@@ -38,18 +46,28 @@ interface StatisticsAttribution {
 }
 
 interface DownloadTask {
-  downloadFn: (registerCancel: (cancel: () => void) => void) => Promise<any>;
+  downloadFn: (registerCancel: (cancel: DownloadCancelCallback) => void) => Promise<any>;
   id: string;
   title: string;
   resolve: (value: any) => void;
   reject: (reason?: any) => void;
-  cancelFn?: () => void;
+  cancelFn?: DownloadCancelCallback;
   sourceUrl?: string;
   type?: string;
   retryMetadata?: DownloadRetryMetadata;
   cancelled?: boolean;
   cancellationFinalized?: boolean;
   cancellationRejected?: boolean;
+  paused?: boolean;
+  pauseFinalized?: boolean;
+  // Progress state snapshotted from the paused row, reapplied to the active
+  // row when the task starts again so the UI continues from where it was.
+  resumeSnapshot?: {
+    progress?: number;
+    downloadedSize?: string;
+    totalSize?: string;
+    filename?: string;
+  };
   statistics?: StatisticsAttribution;
 }
 
@@ -147,13 +165,14 @@ async function awaitTaskFailHook(
 
 async function awaitTaskCancellationHook(
   taskId: string,
-  cancelFn: () => void | Promise<void>,
+  cancelFn: DownloadCancelCallback,
+  reason?: DownloadStopReason,
 ): Promise<void> {
   let timeoutId: NodeJS.Timeout | null = null;
 
   try {
     await Promise.race([
-      Promise.resolve().then(() => cancelFn()),
+      Promise.resolve().then(() => cancelFn(reason)),
       new Promise<void>((resolve) => {
         timeoutId = setTimeout(() => {
           console.warn(
@@ -176,6 +195,9 @@ class DownloadManager {
   private retryTimers: Map<string, NodeJS.Timeout>;
   private activeDownloads: number;
   private maxConcurrentDownloads: number;
+  // Set while the app is shutting down: stops the queue from starting new
+  // tasks (or re-enqueueing paused ones) after each pause finalization.
+  private shuttingDown = false;
 
   constructor() {
     this.queue = [];
@@ -206,13 +228,22 @@ class DownloadManager {
     type: string,
     retryMetadata?: DownloadRetryMetadata,
     rawRetryMetadata?: string | null,
+    resumeOutputPath?: string,
   ): DownloadTask | null {
     if (!canRestoreDetachedTask(type, rawRetryMetadata)) {
       return null;
     }
 
     return {
-      downloadFn: createDownloadTask(type, sourceUrl, id, retryMetadata),
+      // The 5th argument is only appended when defined so restore paths
+      // without resume state keep producing 4-argument calls.
+      downloadFn: createDownloadTask(
+        type,
+        sourceUrl,
+        id,
+        retryMetadata,
+        ...(resumeOutputPath !== undefined ? [resumeOutputPath] : []),
+      ),
       id,
       title,
       sourceUrl,
@@ -237,7 +268,7 @@ class DownloadManager {
   }
 
   private enqueueTask(task: DownloadTask, persistQueue = true): void {
-    if (this.hasTask(task.id)) {
+    if (this.shuttingDown || this.hasTask(task.id)) {
       return;
     }
 
@@ -427,6 +458,22 @@ class DownloadManager {
               continue;
             }
 
+            // A queued row that carries a paused snapshot (a resumed task that
+            // was still waiting in the queue when the app stopped) must keep
+            // it across the restart, or the resume would re-plan a fresh
+            // output path and re-download from zero.
+            if (
+              download.progress !== undefined ||
+              download.filename !== undefined
+            ) {
+              restoredTask.resumeSnapshot = {
+                progress: download.progress,
+                downloadedSize: download.downloadedSize,
+                totalSize: download.totalSize,
+                filename: download.filename,
+              };
+            }
+
             this.queue.push(restoredTask);
           } else {
             console.warn(
@@ -462,7 +509,7 @@ class DownloadManager {
    * @returns - Resolves when the download is complete
    */
   async addDownload(
-    downloadFn: (registerCancel: (cancel: () => void) => void) => Promise<any>,
+    downloadFn: (registerCancel: (cancel: DownloadCancelCallback) => void) => Promise<any>,
     id: string,
     title: string,
     sourceUrl?: string,
@@ -588,7 +635,8 @@ class DownloadManager {
         try {
           await awaitTaskCancellationHook(
             id,
-            task.cancelFn as () => void | Promise<void>,
+            task.cancelFn,
+            "cancel",
           );
         } catch (error) {
           console.error(
@@ -617,8 +665,253 @@ class DownloadManager {
           id,
           "Retry cancelled by user"
         );
+        return;
+      }
+
+      const pausedItem = storageService.getPausedDownload(id);
+      if (pausedItem) {
+        console.log("Cancelling paused download:", sanitizeLogMessage(id));
+        storageService.removePausedDownload(id);
       }
     }
+  }
+
+  private toPausedDownloadInfo(task: DownloadTask): DownloadInfo {
+    // Snapshot live progress before the active row is removed so a resume
+    // continues from where the download left off.
+    const active = storageService.getActiveDownload(task.id);
+    return {
+      id: task.id,
+      title: active?.title || task.title,
+      timestamp: Date.now(),
+      sourceUrl: task.sourceUrl,
+      type: task.type,
+      retryMetadata:
+        task.retryMetadata && requiresRetryMetadata(task.retryMetadata)
+          ? serializeRetryMetadata(task.retryMetadata)
+          : undefined,
+      filename: active?.filename,
+      progress: active?.progress,
+      downloadedSize: active?.downloadedSize,
+      totalSize: active?.totalSize,
+    };
+  }
+
+  /**
+   * Move a task into the paused store. Idempotent and safe to race with
+   * cancellation: whichever finalizes first wins, the other becomes a no-op.
+   */
+  private finalizePausedTask(task: DownloadTask): void {
+    if (task.pauseFinalized || task.cancelled || task.cancellationFinalized) {
+      return;
+    }
+    task.pauseFinalized = true;
+    this.clearRetryTimer(task.id);
+
+    if (this.activeTasks.get(task.id) === task) {
+      this.activeTasks.delete(task.id);
+      this.activeDownloads = Math.max(0, this.activeDownloads - 1);
+    }
+
+    const pausedInfo = this.toPausedDownloadInfo(task);
+    storageService.removeActiveDownload(task.id);
+    storageService.addPausedDownload(pausedInfo);
+    console.log(
+      "Download paused:",
+      sanitizeLogMessage(task.title),
+      sanitizeLogMessage(task.id),
+    );
+
+    if (!task.cancellationRejected) {
+      task.cancellationRejected = true;
+      task.reject(DownloadPausedError.create());
+    }
+
+    this.processQueue();
+  }
+
+  /**
+   * Pause a download: stop it if running, or pull it out of the queue.
+   * Paused tasks are persisted and can be resumed with resumeDownload.
+   * @param id - ID of the download to pause
+   */
+  async pauseDownload(id: string): Promise<void> {
+    const queuedIndex = this.queue.findIndex((task) => task.id === id);
+    if (queuedIndex !== -1) {
+      const [task] = this.queue.splice(queuedIndex, 1);
+      console.log(
+        "Pausing queued download:",
+        sanitizeLogMessage(task.title),
+        sanitizeLogMessage(id),
+      );
+      this.clearRetryTimer(id);
+      storageService.addPausedDownload(this.toPausedDownloadInfo(task));
+      this.updateQueuedDownloads();
+      return;
+    }
+
+    const activeTask = this.activeTasks.get(id);
+    if (activeTask) {
+      console.log(
+        "Pausing active download:",
+        sanitizeLogMessage(activeTask.title),
+        sanitizeLogMessage(id),
+      );
+      activeTask.paused = true;
+
+      if (activeTask.cancelFn) {
+        try {
+          await awaitTaskCancellationHook(
+            id,
+            activeTask.cancelFn,
+            "pause",
+          );
+        } catch (error) {
+          console.error(
+            "Error calling cancel function for pause:",
+            sanitizeLogMessage(id),
+            error,
+          );
+        }
+      }
+
+      this.finalizePausedTask(activeTask);
+      return;
+    }
+
+    console.log("Pause requested but download not found:", sanitizeLogMessage(id));
+  }
+
+  /**
+   * Pause every active download and stop the queue. Called during app
+   * shutdown: each task runs the normal pause flow (kill the yt-dlp process,
+   * keep .part/.ytdl artifacts, snapshot progress into the paused store) so
+   * nothing is lost when the process exits. Queued tasks are left as-is -
+   * they are persisted and restored on next startup. Safe to call twice and
+   * awaited with an overall timeout by the signal handler in server.ts.
+   */
+  async pauseAllActiveDownloadsForShutdown(): Promise<void> {
+    this.shuttingDown = true;
+    const activeIds = [...this.activeTasks.keys()];
+    if (activeIds.length === 0) {
+      return;
+    }
+    console.log(
+      `Shutdown: pausing ${activeIds.length} active download(s) before exit...`,
+    );
+    await Promise.allSettled(
+      activeIds.map((id) => this.pauseDownload(id)),
+    );
+  }
+
+  /**
+   * Resume a paused download by recreating its task and re-enqueueing it.
+   * @param id - ID of the paused download to resume
+   */
+  async resumeDownload(id: string): Promise<void> {
+    const pausedInfo = storageService.getPausedDownload(id);
+    if (!pausedInfo) {
+      console.log(
+        "Resume requested but paused download not found:",
+        sanitizeLogMessage(id),
+      );
+      return;
+    }
+
+    // Check before deleting the paused row: if a task with the same id is
+    // already queued or active, deleting the row would make the entry vanish
+    // without ever being restored.
+    if (this.hasTask(id)) {
+      console.log(
+        "Resume requested but download already queued or active:",
+        sanitizeLogMessage(id),
+      );
+      return;
+    }
+
+    storageService.removePausedDownload(id);
+
+    if (
+      !pausedInfo.sourceUrl ||
+      !pausedInfo.type ||
+      !canRestoreDetachedTask(pausedInfo.type, pausedInfo.retryMetadata)
+    ) {
+      console.warn(
+        `Could not resume download ${sanitizeLogMessage(id)}: missing or unrestorable download metadata`,
+      );
+      storageService.addDownloadHistoryItem({
+        id,
+        title: pausedInfo.title,
+        finishedAt: Date.now(),
+        status: "failed",
+        error:
+          "Download could not be resumed after pausing. Please download again.",
+        sourceUrl: pausedInfo.sourceUrl,
+        platform: platformFromUrl(pausedInfo.sourceUrl),
+        sourceKind: "unknown",
+        downloadType: pausedInfo.type,
+      });
+      return;
+    }
+
+    // New-style pause snapshots store the real planned output path (relative
+    // to VIDEOS_DIR) in `filename`, which never equals the title. Legacy
+    // snapshots stored the title there instead, so the path is unknown and
+    // we try to adopt an orphan .part file by title before re-planning.
+    // When a valid path exists it is used as-is: the downloader verifies the
+    // .part file on disk and falls back to normal planning without it.
+    let resumeOutputPath: string | undefined;
+    if (pausedInfo.filename && pausedInfo.filename !== pausedInfo.title) {
+      resumeOutputPath = pausedInfo.filename;
+    } else {
+      resumeOutputPath = await adoptOrphanResumePathByTitle(pausedInfo.title);
+      if (resumeOutputPath) {
+        console.log(
+          `Adopted orphan resume artifacts for ${sanitizeLogMessage(pausedInfo.title)}: ${sanitizeLogMessage(resumeOutputPath)}`,
+        );
+      }
+    }
+
+    const restoredTask = this.createDetachedTask(
+      pausedInfo.id,
+      pausedInfo.title,
+      pausedInfo.sourceUrl,
+      pausedInfo.type,
+      parseRetryMetadata(pausedInfo.retryMetadata),
+      pausedInfo.retryMetadata,
+      resumeOutputPath,
+    );
+    if (!restoredTask) {
+      storageService.addDownloadHistoryItem({
+        id,
+        title: pausedInfo.title,
+        finishedAt: Date.now(),
+        status: "failed",
+        error:
+          "Download could not be resumed after pausing. Please download again.",
+        sourceUrl: pausedInfo.sourceUrl,
+        platform: platformFromUrl(pausedInfo.sourceUrl),
+        sourceKind: "unknown",
+        downloadType: pausedInfo.type,
+      });
+      return;
+    }
+
+    // Carry the paused snapshot into the task so processQueue can restore the
+    // visible progress as soon as the active row is recreated.
+    restoredTask.resumeSnapshot = {
+      progress: pausedInfo.progress,
+      downloadedSize: pausedInfo.downloadedSize,
+      totalSize: pausedInfo.totalSize,
+      filename: pausedInfo.filename,
+    };
+
+    console.log(
+      "Resuming paused download:",
+      sanitizeLogMessage(pausedInfo.title),
+      sanitizeLogMessage(id),
+    );
+    this.enqueueTask(restoredTask);
   }
 
   /**
@@ -679,6 +972,10 @@ class DownloadManager {
         task.retryMetadata && requiresRetryMetadata(task.retryMetadata)
           ? serializeRetryMetadata(task.retryMetadata)
           : undefined,
+      // A resumed task keeps its paused snapshot while it waits in the queue;
+      // persisting it here (instead of only in memory) means a restart cannot
+      // discard the breakpoint the user is resuming onto.
+      ...(task.resumeSnapshot ?? {}),
     }));
     storageService.setQueuedDownloads(queuedDownloads);
   }
@@ -687,6 +984,9 @@ class DownloadManager {
    * Process the download queue
    */
   private async processQueue(): Promise<void> {
+    if (this.shuttingDown) {
+      return;
+    }
     if (
       this.activeDownloads >= this.maxConcurrentDownloads ||
       this.queue.length === 0
@@ -699,6 +999,8 @@ class DownloadManager {
 
     this.updateQueuedDownloads();
     this.activeDownloads++;
+    // A newly started download cancels any pending shutdown countdown
+    abortPendingShutdown("new download started");
     this.activeTasks.set(task.id, task);
 
     // Update status in storage
@@ -709,6 +1011,28 @@ class DownloadManager {
         sourceUrl: task.sourceUrl,
         type: task.type,
       });
+    }
+
+    // Restore the paused snapshot so the UI continues from the paused
+    // progress instead of dropping to 0. Only fields that actually have a
+    // value are written back.
+    if (task.resumeSnapshot) {
+      const snapshotUpdates: NonNullable<DownloadTask["resumeSnapshot"]> = {};
+      if (task.resumeSnapshot.progress !== undefined) {
+        snapshotUpdates.progress = task.resumeSnapshot.progress;
+      }
+      if (task.resumeSnapshot.downloadedSize !== undefined) {
+        snapshotUpdates.downloadedSize = task.resumeSnapshot.downloadedSize;
+      }
+      if (task.resumeSnapshot.totalSize !== undefined) {
+        snapshotUpdates.totalSize = task.resumeSnapshot.totalSize;
+      }
+      if (task.resumeSnapshot.filename !== undefined) {
+        snapshotUpdates.filename = task.resumeSnapshot.filename;
+      }
+      if (Object.keys(snapshotUpdates).length > 0) {
+        storageService.updateActiveDownload(task.id, snapshotUpdates);
+      }
     }
 
     // download_started: pair with download_enqueued via relatedEventId so the
@@ -747,9 +1071,26 @@ class DownloadManager {
 
       const result = await task.downloadFn((cancel) => {
         task.cancelFn = cancel;
+        // If a stop request arrived before this registration, fire the hook
+        // immediately so the downloader stops on the spot instead of running
+        // until the next DB checkpoint. Reason "pause" makes the downloader
+        // skip .part cleanup, which is safe even for a cancel - the next DB
+        // checkpoint will raise the corresponding error anyway.
+        if (task.paused) {
+          void Promise.resolve()
+            .then(() => cancel("pause"))
+            .catch((error) => console.error("Late pause hook failed:", error));
+        } else if (task.cancelled) {
+          void Promise.resolve()
+            .then(() => cancel("cancel"))
+            .catch((error) => console.error("Late cancel hook failed:", error));
+        }
       });
       if (task.cancelled) {
         throw DownloadCancelledError.create();
+      }
+      if (task.paused) {
+        throw DownloadPausedError.create();
       }
 
       if (isStructuredDownloadResult(result)) {
@@ -883,6 +1224,14 @@ class DownloadManager {
 
       task.resolve(result);
     } catch (error) {
+      // A paused task is stopped like a cancelled one, but it must not write
+      // failure history or fire cancel/fail hooks - it goes to the paused
+      // store so it can be resumed later.
+      if (task.paused) {
+        this.finalizePausedTask(task);
+        return;
+      }
+
       // Check if this is a cancellation - handle differently
       if (isCancelledError(error) || task.cancelled) {
         console.log("Download cancelled:", sanitizeLogMessage(task.title));
@@ -959,6 +1308,8 @@ class DownloadManager {
       }
       // Process next item in queue
       this.processQueue();
+      // Fires the pending auto-shutdown when this was the last task
+      notifyDownloadSettled(this.activeDownloads, this.queue.length);
     }
   }
 

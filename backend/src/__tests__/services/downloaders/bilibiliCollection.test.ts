@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DownloadCancelledError } from "../../../errors/DownloadErrors";
+import {
+  DownloadCancelledError,
+  DownloadPausedError,
+} from "../../../errors/DownloadErrors";
 
 const mocks = vi.hoisted(() => ({
   axiosGet: vi.fn(),
@@ -12,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   updateActiveDownloadTitle: vi.fn(),
   getVideoBySourceUrl: vi.fn(),
   getDownloadStatus: vi.fn(),
+  getPausedDownload: vi.fn(),
   linkVideoToCollection: vi.fn(),
   getSettings: vi.fn(),
   cleanupCollectionDirectories: vi.fn(),
@@ -40,6 +44,7 @@ vi.mock("../../../services/storageService", () => ({
     mocks.updateActiveDownloadTitle(...args),
   getVideoBySourceUrl: (...args: any[]) => mocks.getVideoBySourceUrl(...args),
   getDownloadStatus: (...args: any[]) => mocks.getDownloadStatus(...args),
+  getPausedDownload: (...args: any[]) => mocks.getPausedDownload(...args),
   linkVideoToCollection: (...args: any[]) => mocks.linkVideoToCollection(...args),
   getSettings: (...args: any[]) => mocks.getSettings(...args),
   cleanupCollectionDirectories: (...args: any[]) =>
@@ -600,6 +605,37 @@ describe("bilibiliCollection.downloadCollection", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("aborts the collection loop and propagates when a part pauses", async () => {
+    // A pause must not leak into the next part: the next part reuses the same
+    // temp_download_<id> directory, and continuing would eventually delete the
+    // paused part's preserved .part files via the cancel cleanup path.
+    mocks.axiosGet.mockResolvedValue({
+      data: {
+        data: {
+          archives: [
+            { bvid: "BV1", title: "Episode 1", aid: 1 },
+            { bvid: "BV2", title: "Episode 2", aid: 2 },
+          ],
+          page: { total: 2 },
+        },
+      },
+    });
+    mocks.getCollectionById.mockReturnValue(undefined);
+    mocks.getVideoBySourceUrl.mockReturnValue(undefined);
+    mocks.downloadSinglePart.mockRejectedValue(DownloadPausedError.create());
+
+    await expect(
+      downloadCollection(
+        { success: true, type: "collection", id: 42, mid: 9, title: "Series" },
+        "Series",
+        "download-pause",
+      )
+    ).rejects.toBeInstanceOf(DownloadPausedError);
+
+    // Only the first part was attempted - the loop did not continue.
+    expect(mocks.downloadSinglePart).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry a generic (non-risk-control) failure", async () => {

@@ -137,3 +137,119 @@ export const deleteCollection = async (
 
   res.json(successMessage("Collection deleted successfully"));
 };
+
+/**
+ * Move multiple videos into this collection, removing them from every other
+ * collection they currently belong to (files follow the video per the
+ * author-organization settings). Body: { videoIds: string[] }
+ */
+export const moveVideosToCollection = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const id = getStringParam(req.params.id) ?? "";
+  const collection = storageService.getCollectionById(id);
+  if (!collection) {
+    throw new NotFoundError("Collection", id);
+  }
+
+  const rawVideoIds = req.body?.videoIds;
+  const videoIds = Array.isArray(rawVideoIds)
+    ? rawVideoIds.map((videoId: unknown) => String(videoId)).filter(Boolean)
+    : [];
+  if (videoIds.length === 0) {
+    throw new ValidationError("videoIds must be a non-empty array");
+  }
+
+  let moved = 0;
+  for (const videoId of videoIds) {
+    if (!storageService.getVideoById(videoId)) {
+      continue;
+    }
+    const updated = storageService.moveVideoToExclusiveCollection(
+      id,
+      videoId
+    );
+    if (updated) {
+      moved += 1;
+    }
+  }
+
+  res.json(
+    successMessage(
+      `Moved ${moved} video(s) into "${collection.name || collection.title}"`
+    )
+  );
+};
+
+const COLLECTION_NUMERIC_SUFFIX_PATTERN = /\s+\(\d+\)\s*$/;
+
+const stripNumericSuffix = (name: string): string =>
+  (name || "").replace(COLLECTION_NUMERIC_SUFFIX_PATTERN, "").trim();
+
+/**
+ * Merge duplicate collections whose names differ only by a trailing " (n)"
+ * counter (e.g. "合集", "合集 (1)", "合集 (2)") into the oldest unsuffixed
+ * one. Videos keep their files (moved to the kept collection's folder).
+ */
+export const mergeDuplicateCollections = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  const collections = storageService.getCollections();
+  const groups = new Map<string, Collection[]>();
+
+  for (const collection of collections) {
+    const baseName = stripNumericSuffix(collection.name || collection.title || "");
+    const bucket = groups.get(baseName);
+    if (bucket) {
+      bucket.push(collection);
+    } else {
+      groups.set(baseName, [collection]);
+    }
+  }
+
+  const merged: Array<{ from: string; into: string; movedVideos: number }> = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const sorted = [...group].sort((a, b) => {
+      const aSuffixed = COLLECTION_NUMERIC_SUFFIX_PATTERN.test(a.name || "");
+      const bSuffixed = COLLECTION_NUMERIC_SUFFIX_PATTERN.test(b.name || "");
+      if (aSuffixed !== bSuffixed) {
+        return aSuffixed ? 1 : -1; // keep the unsuffixed original
+      }
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
+    });
+    const keeper = sorted[0];
+
+    for (const duplicate of sorted.slice(1)) {
+      let movedVideos = 0;
+      for (const videoId of [...duplicate.videos]) {
+        const updated = storageService.moveVideoToExclusiveCollection(
+          keeper.id,
+          videoId
+        );
+        if (updated) {
+          movedVideos += 1;
+        }
+      }
+      storageService.deleteCollection(duplicate.id);
+      merged.push({
+        from: duplicate.name || duplicate.title || duplicate.id,
+        into: keeper.name || keeper.title || keeper.id,
+        movedVideos,
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    message:
+      merged.length > 0
+        ? `Merged ${merged.length} duplicate collection(s)`
+        : "No duplicate collections found",
+    merged,
+  });
+};

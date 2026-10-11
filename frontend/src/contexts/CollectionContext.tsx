@@ -14,6 +14,8 @@ interface CollectionContextType {
     removeFromCollection: (collectionId: string, videoId: string) => Promise<boolean>;
     deleteCollection: (collectionId: string, deleteVideos?: boolean) => Promise<{ success: boolean; error?: string }>;
     updateCollection: (id: string, name: string) => Promise<{ success: boolean; error?: string }>;
+    moveVideosToCollection: (collectionId: string, videoIds: string[]) => Promise<boolean>;
+    mergeDuplicateCollections: () => Promise<{ success: boolean; mergedCount: number; message?: string }>;
 }
 
 const CollectionContext = createContext<CollectionContextType | undefined>(undefined);
@@ -179,6 +181,44 @@ export const CollectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
     };
 
+    const moveVideosMutation = useMutation({
+        mutationFn: async ({ collectionId, videoIds }: { collectionId: string, videoIds: string[] }) => {
+            const response = await api.post(`/collections/${collectionId}/videos/move`, { videoIds });
+            return response.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['videos'] });
+            showSnackbar(t('videosMovedToCollection'));
+        },
+        onError: (error) => {
+            console.error('Error moving videos to collection:', error);
+            showSnackbar(t('failedToMoveVideos'), 'error');
+        }
+    });
+
+    const moveVideosToCollection = async (collectionId: string, videoIds: string[]) => {
+        try {
+            await moveVideosMutation.mutateAsync({ collectionId, videoIds });
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
+    const mergeDuplicateCollections = async (): Promise<{ success: boolean; mergedCount: number; message?: string }> => {
+        try {
+            const response = await api.post('/collections/merge-duplicates');
+            queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['videos'] });
+            const mergedCount = Array.isArray(response.data?.merged) ? response.data.merged.length : 0;
+            return { success: true, mergedCount, message: response.data?.message };
+        } catch (error: any) {
+            console.error('Error merging duplicate collections:', error);
+            showSnackbar(error.response?.data?.error || t('mergeFailed'), 'error');
+            return { success: false, mergedCount: 0 };
+        }
+    };
     return (
         <CollectionContext.Provider value={{
             collections,
@@ -187,7 +227,9 @@ export const CollectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             addToCollection,
             removeFromCollection,
             deleteCollection,
-            updateCollection
+            updateCollection,
+            moveVideosToCollection,
+            mergeDuplicateCollections
         }}>
             {children}
         </CollectionContext.Provider>

@@ -1,4 +1,4 @@
-import { Check, Close, Delete, Edit, Folder } from '@mui/icons-material';
+import { Check, Close, Delete, Edit, Folder, FolderOpen } from '@mui/icons-material';
 import {
     Alert,
     Box,
@@ -19,6 +19,7 @@ import {
     useMediaQuery
 } from '@mui/material';
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useSnackbar } from '../../contexts/SnackbarContext';
@@ -54,6 +55,7 @@ const CollectionsTable: React.FC<CollectionsTableProps> = ({
     order,
     onSort
 }) => {
+    const navigate = useNavigate();
     const { t } = useLanguage();
     const { userRole } = useAuth();
     const { showSnackbar } = useSnackbar();
@@ -193,7 +195,7 @@ const CollectionsTable: React.FC<CollectionsTableProps> = ({
                         </TableHead>
                         <TableBody>
                             {displayedCollections.map(collection => (
-                                <TableRow key={collection.id} hover>
+                                <TableRow key={collection.id} hover sx={{ '&:hover .open-collection-hint': { opacity: 1 } }}>
                                     <TableCell component="th" scope="row" sx={{ fontWeight: 500 }}>
                                         {editingCollectionId === collection.id ? (
                                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -233,6 +235,15 @@ const CollectionsTable: React.FC<CollectionsTableProps> = ({
                                             </Box>
                                         ) : (
                                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                <IconButton
+                                                    size="small"
+                                                    color="primary"
+                                                    onClick={() => navigate(`/collection/${collection.id}`)}
+                                                    sx={{ mr: 1, opacity: 0.6, '&:hover': { opacity: 1 } }}
+                                                    aria-label="open collection"
+                                                >
+                                                    <FolderOpen fontSize="small" />
+                                                </IconButton>
                                                 {!isVisitor && (
                                                     <IconButton
                                                         size="small"
@@ -243,7 +254,13 @@ const CollectionsTable: React.FC<CollectionsTableProps> = ({
                                                         <Edit fontSize="small" />
                                                     </IconButton>
                                                 )}
-                                                {collection.name}
+                                                <Typography
+                                                    variant="body2"
+                                                    onClick={() => navigate(`/collection/${collection.id}`)}
+                                                    sx={{ cursor: 'pointer', '&:hover': { color: 'primary.main', textDecoration: 'underline' } }}
+                                                >
+                                                    {collection.name}
+                                                </Typography>
                                             </Box>
                                         )}
                                     </TableCell>

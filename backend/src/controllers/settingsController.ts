@@ -14,6 +14,7 @@ import {
 } from "../config/paths";
 import { cloudflaredService } from "../services/cloudflaredService";
 import downloadManager from "../services/downloadManager";
+import { setAutoShutdownEnabled } from "../services/autoShutdownService";
 import { normalizeFilenameNamingSettings, resolveFilenameNamingConfig } from "../services/filenameTemplate/config";
 import * as passwordService from "../services/passwordService";
 import * as settingsValidationService from "../services/settingsValidationService";
@@ -685,6 +686,7 @@ const applyRuntimeSettingChanges = (
       finalSettings.maxConcurrentDownloads
     );
   }
+  setAutoShutdownEnabled(finalSettings.autoShutdownEnabled === true);
 };
 
 const generateApiKey = (): string => crypto.randomBytes(32).toString("hex");

@@ -18,6 +18,32 @@ export const cancelDownload = async (
 };
 
 /**
+ * Pause a download (running or queued)
+ * Errors are automatically handled by asyncHandler middleware
+ */
+export const pauseDownload = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const id = getStringParam(req.params.id) ?? "";
+  await downloadManager.pauseDownload(id);
+  sendSuccessMessage(res, "Download paused");
+};
+
+/**
+ * Resume a paused download
+ * Errors are automatically handled by asyncHandler middleware
+ */
+export const resumeDownload = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const id = getStringParam(req.params.id) ?? "";
+  downloadManager.resumeDownload(id);
+  sendSuccessMessage(res, "Download resumed");
+};
+
+/**
  * Remove from queue
  * Errors are automatically handled by asyncHandler middleware
  */

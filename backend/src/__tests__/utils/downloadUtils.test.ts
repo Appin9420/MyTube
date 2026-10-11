@@ -1,6 +1,9 @@
 import fs from "fs-extra";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DownloadCancelledError } from "../../errors/DownloadErrors";
+import {
+  DownloadCancelledError,
+  DownloadPausedError,
+} from "../../errors/DownloadErrors";
 import * as storageService from "../../services/storageService";
 import * as downloadUtils from "../../utils/downloadUtils";
 import { sanitizeLogMessage } from "../../utils/logger";
@@ -14,6 +17,7 @@ vi.mock("fs-extra", () => ({
 }));
 vi.mock("../../services/storageService", () => ({
   getDownloadStatus: vi.fn(),
+  getPausedDownload: vi.fn(),
 }));
 vi.mock("../../utils/logger", () => ({
   sanitizeLogMessage: vi.fn((input: string) => input),
@@ -68,6 +72,32 @@ describe("downloadUtils", () => {
     });
 
     it("throws DownloadCancelledError when cancelled", () => {
+      expect(() => downloadUtils.throwIfCancelled("job-1")).toThrow(
+        DownloadCancelledError
+      );
+    });
+
+    it("throws DownloadPausedError when a paused row exists for the id", () => {
+      // Pausing removes the active row and writes a status='paused' row; the
+      // downloader must see a pause (keep .part files), not a cancel.
+      vi.mocked(storageService.getPausedDownload as any).mockReturnValue({
+        id: "job-1",
+        status: "paused",
+      });
+
+      expect(() => downloadUtils.throwIfCancelled("job-1")).toThrow(
+        DownloadPausedError
+      );
+      expect(() => downloadUtils.throwIfCancelled("job-1")).not.toThrow(
+        DownloadCancelledError
+      );
+    });
+
+    it("throws DownloadCancelledError when the id is neither active nor paused", () => {
+      vi.mocked(storageService.getPausedDownload as any).mockReturnValue(
+        undefined
+      );
+
       expect(() => downloadUtils.throwIfCancelled("job-1")).toThrow(
         DownloadCancelledError
       );

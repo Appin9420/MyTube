@@ -56,6 +56,20 @@ const DownloadSettings: React.FC<DownloadSettingsProps> = ({
                 />
             </Box>
 
+            <Box sx={{ mt: 3 }} id="autoShutdown-setting">
+                <FormControlLabel
+                    control={
+                        <Switch
+                            checked={settings.autoShutdownEnabled === true}
+                            onChange={(e) => onChange('autoShutdownEnabled', e.target.checked)}
+                        />
+                    }
+                    label={t('autoShutdownTitle') || '下载完成后自动关机'}
+                />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
+                    {t('autoShutdownDescription') || '开启后，当所有下载任务全部结束时，将在 60 秒后关闭计算机。再次关闭此开关可取消尚未执行的关机。'}
+                </Typography>
+            </Box>
             <Box sx={{ mt: 3 }} id="autoRetry-setting">
                 <FormControlLabel
                     control={

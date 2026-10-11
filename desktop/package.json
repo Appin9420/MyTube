@@ -1,0 +1,74 @@
+{
+  "name": "mytube-desktop",
+  "version": "1.10.4",
+  "description": "MyTube desktop shell (Electron) - launches the local MyTube server and hosts its UI",
+  "main": "main.js",
+  "author": "franklioxygen",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron . --dev",
+    "start": "electron .",
+    "prepare:resources": "node scripts/prepare-resources.mjs",
+    "build:dir": "node scripts/prepare-resources.mjs && electron-builder --dir --x64",
+    "build": "node scripts/prepare-resources.mjs && electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "io.github.franklioxygen.mytube",
+    "productName": "MyTube",
+    "copyright": "Copyright © 2026 franklioxygen",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-res"
+    },
+    "files": [
+      "main.js",
+      "lockStore.cjs",
+      "preload-lock.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/staging/app",
+        "to": "server",
+        "filter": ["**/*", "node_modules/**"]
+      },
+      {
+        "from": "build/staging/bin",
+        "to": "bin"
+      },
+      {
+        "from": "scripts/backfill-thumbnails.cjs",
+        "to": "scripts/backfill-thumbnails.cjs"
+      }
+    ],
+    "compression": "normal",
+    "afterPack": "scripts/afterpack.cjs",
+    "win": {
+      "icon": "build-res/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "dir",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MyTube",
+      "artifactName": "MyTube-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

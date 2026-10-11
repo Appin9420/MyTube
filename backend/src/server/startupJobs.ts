@@ -1,7 +1,10 @@
 import { logger } from "../utils/logger";
 import { startCloudflaredIfEnabled } from "./cloudRoutes";
+import { setAutoShutdownEnabled } from "../services/autoShutdownService";
+import { getSettings } from "../services/storageService";
 
 export const startBackgroundJobs = (port: number): void => {
+    setAutoShutdownEnabled(getSettings().autoShutdownEnabled === true);
   import("../services/subscriptionService")
     .then(({ subscriptionService }) => {
       subscriptionService.startScheduler();

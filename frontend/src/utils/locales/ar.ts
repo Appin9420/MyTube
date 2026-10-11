@@ -687,6 +687,21 @@ export const ar = {
   loadingCollection: "جاري تحميل المجموعة...",
   collectionNotFound: "المجموعة غير موجودة",
   noVideosInCollection: "لا توجد فيديوهات في هذه المجموعة.",
+  autoShutdownTitle: 'Auto shutdown when downloads finish',
+  autoShutdownDescription: 'When enabled and all download tasks finish, the computer will shut down in 60 seconds. Toggle the switch off again to cancel a pending shutdown.',
+  batchTransfer: 'Batch transfer',
+  moveToAnotherCollection: 'Move to another collection',
+  targetCollection: 'Target collection',
+  selectedCount: '{n} selected',
+  selectAll: 'Select all',
+  clearSelection: 'Clear',
+  confirmMove: 'Move',
+  moving: 'Moving...',
+  videosMovedToCollection: 'Videos moved successfully',
+  failedToMoveVideos: 'Failed to move videos',
+  mergeDuplicates: 'Merge duplicate collections',
+  mergeDone: 'Merge complete',
+  mergeFailed: 'Merge failed',
   back: "رجوع",
 
 
@@ -805,6 +820,15 @@ export const ar = {
   allPartsAddedToCollection: "سيتم إضافة جميع الأجزاء إلى هذه المجموعة",
   allVideosAddedToCollection: "سيتم إضافة جميع الفيديوهات إلى هذه المجموعة",
   queued: "في الانتظار",
+
+  pausedDownloads: "متوقف مؤقتًا",
+
+  downloadPaused: "تم إيقاف التحميل مؤقتًا",
+
+  downloadResumed: "تم استئناف التحميل",
+
+
+  downloadMerging: "جارٍ دمج المقاطع…",
   waitingInQueue: "في قائمة الانتظار",
 
 

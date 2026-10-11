@@ -1,5 +1,5 @@
 import { IMAGES_DIR, VIDEOS_DIR } from "../../../config/paths";
-import { DownloadCancelledError } from "../../../errors/DownloadErrors";
+import { DownloadCancelledError, isPausedError } from "../../../errors/DownloadErrors";
 import { isCancellationError } from "../../../utils/downloadUtils";
 import { formatVideoFilename } from "../../../utils/helpers";
 import { FilenameTemplateSourceOptions } from "../../filenameTemplate/types";
@@ -278,6 +278,10 @@ export async function downloadSinglePart(
     try {
       downloader.throwIfCancelledPublic(downloadId);
     } catch (error) {
+      // A pause keeps the downloaded part intact for resume - skip cleanup.
+      if (isPausedError(error)) {
+        throw error;
+      }
       // Clean up any files that were created
       await cleanupFilesOnCancellation(newVideoPath, newThumbnailPath);
       throw DownloadCancelledError.create();
@@ -461,7 +465,11 @@ export async function downloadSinglePart(
     // failed episode. downloadCollection relies on a thrown DownloadCancelledError
     // to stop its loop, so let cancellations propagate instead of swallowing
     // them into a { success: false } result (issue #295).
-    if (isCancellationError(error)) {
+    // A pause error must propagate too: swallowing it would let the collection
+    // loop continue with the next part, which reuses the same temp_download_<id>
+    // directory and its cancel/cleanup path would delete the previous part's
+    // preserved .part files.
+    if (isCancellationError(error) || isPausedError(error)) {
       throw error;
     }
     logger.error(

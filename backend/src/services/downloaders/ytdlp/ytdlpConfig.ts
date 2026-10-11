@@ -492,6 +492,22 @@ export function prepareDownloadFlags(
   const mergeOutputFormat = applyPostBuildRules(context);
   const { flags } = context;
 
+  // Parallel fragment downloads for fragmented formats (HLS/DASH). The default
+  // is conservative for YouTube; the user's yt-dlp config wins when it
+  // specifies one (-N / --concurrent-fragments).
+  const configAny = config as any;
+  const flagsAny = flags as any;
+  const userConcurrent =
+    configAny.N ??
+    configAny.concurrentFragments ??
+    configAny["concurrent-fragments"];
+  if (userConcurrent !== undefined) {
+    flagsAny.concurrentFragments = userConcurrent;
+    delete flagsAny.N;
+  } else if (flagsAny.concurrentFragments === undefined) {
+    flagsAny.concurrentFragments = 4;
+  }
+
   logger.debug("Final yt-dlp flags:", flags);
 
   return {

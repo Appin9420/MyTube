@@ -4,6 +4,7 @@ import {
   isCancellationError,
   throwIfCancelled,
 } from "../../../utils/downloadUtils";
+import { isPausedError } from "../../../errors/DownloadErrors";
 import type { DownloadRetryMetadata } from "../../downloadRetryMetadata";
 import * as storageService from "../../storageService";
 import { Collection } from "../../storageService";
@@ -670,7 +671,11 @@ export async function downloadCollection(
           );
         }
       } catch (videoError) {
-        if (isCancellationError(videoError)) {
+        // A pause must abort the loop immediately and propagate upward: the
+        // next part reuses the same temp_download_<id> directory, and letting
+        // the loop continue would eventually delete the paused part's preserved
+        // .part files via the cancel cleanup path.
+        if (isCancellationError(videoError) || isPausedError(videoError)) {
           throw videoError;
         }
         failedPartNumbers.push(videoNumber);
@@ -747,7 +752,9 @@ export async function downloadCollection(
       error: error || undefined,
     };
   } catch (error: any) {
-    if (isCancellationError(error)) {
+    // Paused downloads are kept resumable: rethrow so the download manager's
+    // task.paused handling finalizes the pause instead of writing a failure.
+    if (isCancellationError(error) || isPausedError(error)) {
       throw error;
     }
     logger.error(`Error downloading ${collectionInfo.type}:`, error);
@@ -959,6 +966,12 @@ export async function downloadRemainingParts(
       error: error || undefined,
     };
   } catch (error) {
+    // A paused multipart download must surface its pause error instead of
+    // being recorded as a failed aggregate result - otherwise the manager
+    // would write failure history for something that is just paused.
+    if (isPausedError(error)) {
+      throw error;
+    }
     logger.error("Error downloading remaining Bilibili parts:", error);
     const remainingPartsCount = totalParts - startPart + 1;
     return {

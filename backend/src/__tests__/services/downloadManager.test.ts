@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CloudStorageService } from '../../services/CloudStorageService';
 import { DownloadCancelledError } from '../../errors/DownloadErrors';
 import { createDownloadTask } from '../../services/downloadService';
+import { adoptOrphanResumePathByTitle } from '../../services/downloadResumeAdoption';
 import { HookService } from '../../services/hookService';
 import * as storageService from '../../services/storageService';
 import { extractSourceVideoId } from '../../utils/helpers';
@@ -23,6 +24,10 @@ vi.mock('../../db', () => ({
 vi.mock('../../services/storageService');
 vi.mock('../../services/downloadService', () => ({
   createDownloadTask: vi.fn(),
+}));
+vi.mock('../../services/downloadResumeAdoption', () => ({
+  adoptOrphanResumePathByTitle: vi.fn().mockResolvedValue(undefined),
+  pickAdoptableResumePath: vi.fn(),
 }));
 vi.mock('../../services/hookService', () => ({
   HookService: {
@@ -147,6 +152,9 @@ describe('DownloadManager', () => {
         },
       }),
     );
+    // clearAllMocks keeps implementations, so normalize the adoption mock
+    // (default: no orphan artifacts found) before every test.
+    (adoptOrphanResumePathByTitle as any).mockResolvedValue(undefined);
     
     downloadManager = (await import('../../services/downloadManager')).default;
   });
@@ -948,6 +956,432 @@ describe('DownloadManager', () => {
 
       expect(downloadManager.getStatus().queued).toBe(0);
       expect(storageService.setQueuedDownloads).toHaveBeenCalled();
+    });
+  });
+
+  describe('pause and resume', () => {
+    it('should pause an active download without writing failure history', async () => {
+      const activeDownloadFn = vi.fn().mockImplementation((registerCancel: any) => {
+        registerCancel(vi.fn());
+        return new Promise(() => {});
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'pause-1',
+        'Pause me',
+        'https://www.youtube.com/watch?v=pause',
+        'youtube',
+      );
+      running.catch(() => {});
+      await waitForQueue();
+
+      await downloadManager.pauseDownload('pause-1');
+
+      expect(storageService.removeActiveDownload).toHaveBeenCalledWith('pause-1');
+      expect(storageService.addPausedDownload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'pause-1',
+          title: 'Pause me',
+          sourceUrl: 'https://www.youtube.com/watch?v=pause',
+          type: 'youtube',
+        }),
+      );
+      expect(storageService.addDownloadHistoryItem).not.toHaveBeenCalled();
+      expect(HookService.executeHook).not.toHaveBeenCalledWith(
+        'task_cancel',
+        expect.anything(),
+      );
+      expect(HookService.executeHook).not.toHaveBeenCalledWith(
+        'task_fail',
+        expect.anything(),
+      );
+      expect(downloadManager.getStatus().active).toBe(0);
+    });
+
+    it('should reject the paused task with DownloadPausedError', async () => {
+      const activeDownloadFn = vi.fn().mockImplementation((registerCancel: any) => {
+        registerCancel(vi.fn());
+        return new Promise(() => {});
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'pause-2',
+        'Pause reject',
+        'https://www.youtube.com/watch?v=pause2',
+        'youtube',
+      );
+      await waitForQueue();
+
+      await downloadManager.pauseDownload('pause-2');
+
+      // Instance check would fail here because vi.resetModules() re-imports
+      // DownloadErrors, so assert on the distinctive message instead.
+      await expect(running).rejects.toThrow('Download paused by user');
+    });
+
+    it('should stop with the pause reason and carry progress into the paused store', async () => {
+      const cancelHook = vi.fn();
+      const activeDownloadFn = vi.fn().mockImplementation((registerCancel: any) => {
+        registerCancel(cancelHook);
+        return new Promise(() => {});
+      });
+      // The active row is removed on pause, so progress must be read first.
+      let activeRow: any = {
+        id: 'pause-reason',
+        title: 'Live title',
+        progress: 42,
+        downloadedSize: '10MB',
+        totalSize: '25MB',
+        filename: 'live-title',
+      };
+      (storageService.getActiveDownload as any).mockImplementation(() => activeRow);
+      (storageService.removeActiveDownload as any).mockImplementation(() => {
+        activeRow = undefined;
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'pause-reason',
+        'Pause reason',
+        'https://www.youtube.com/watch?v=pause-reason',
+        'youtube',
+      );
+      running.catch(() => {});
+      await waitForQueue();
+
+      await downloadManager.pauseDownload('pause-reason');
+
+      expect(cancelHook).toHaveBeenCalledWith('pause');
+      expect(storageService.addPausedDownload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'pause-reason',
+          title: 'Live title',
+          progress: 42,
+          downloadedSize: '10MB',
+          totalSize: '25MB',
+          filename: 'live-title',
+        }),
+      );
+    });
+
+    it('should stop with the cancel reason when cancelling an active download', async () => {
+      const cancelHook = vi.fn();
+      const activeDownloadFn = vi.fn().mockImplementation((registerCancel: any) => {
+        registerCancel(cancelHook);
+        return new Promise(() => {});
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'cancel-reason',
+        'Cancel reason',
+        'https://www.youtube.com/watch?v=cancel-reason',
+        'youtube',
+      );
+      running.catch(() => {});
+      await waitForQueue();
+
+      await downloadManager.cancelDownload('cancel-reason');
+
+      expect(cancelHook).toHaveBeenCalledWith('cancel');
+    });
+
+    it('should pause a queued download and persist it', async () => {
+      downloadManager.setMaxConcurrentDownloads(0);
+      downloadManager.addDownload(
+        vi.fn().mockResolvedValue({ success: true }),
+        'queued-pause',
+        'Queued pause',
+        'https://www.youtube.com/watch?v=queuedpause',
+        'youtube',
+      );
+      await waitForQueue();
+
+      await downloadManager.pauseDownload('queued-pause');
+
+      expect(storageService.addPausedDownload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'queued-pause',
+          type: 'youtube',
+        }),
+      );
+      expect(storageService.setQueuedDownloads).toHaveBeenCalledWith([]);
+      expect(downloadManager.getStatus().queued).toBe(0);
+    });
+
+    it('should resume a paused download by recreating and starting the task', async () => {
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-1',
+        title: 'Paused Task',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=paused',
+        type: 'youtube',
+        retryMetadata: undefined,
+      });
+
+      downloadManager.resumeDownload('paused-1');
+      await waitForQueue();
+
+      expect(storageService.removePausedDownload).toHaveBeenCalledWith('paused-1');
+      expect(createDownloadTask).toHaveBeenCalledWith(
+        'youtube',
+        'https://www.youtube.com/watch?v=paused',
+        'paused-1',
+        undefined,
+      );
+      expect(storageService.addActiveDownload).toHaveBeenCalledWith(
+        'paused-1',
+        'Paused Task',
+      );
+    });
+
+    it('should pass the paused filename to createDownloadTask as resumeOutputPath', async () => {
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-path',
+        title: 'Series Video',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=pathresume',
+        type: 'youtube',
+        retryMetadata: undefined,
+        // New-style snapshot: a real output path relative to VIDEOS_DIR,
+        // never equal to the title.
+        filename: 's2026e092501 - Series Video.mp4',
+      });
+
+      await downloadManager.resumeDownload('paused-path');
+      await waitForQueue();
+
+      // A valid filename is used as-is; the downloader verifies the .part
+      // file on disk, so no adoption is attempted.
+      expect(adoptOrphanResumePathByTitle).not.toHaveBeenCalled();
+      expect(createDownloadTask).toHaveBeenCalledWith(
+        'youtube',
+        'https://www.youtube.com/watch?v=pathresume',
+        'paused-path',
+        undefined,
+        's2026e092501 - Series Video.mp4',
+      );
+    });
+
+    it('should adopt orphan resume artifacts for legacy snapshots whose filename equals the title', async () => {
+      (adoptOrphanResumePathByTitle as any).mockResolvedValue(
+        's2026e092501 - Legacy Title.mp4',
+      );
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-legacy',
+        title: 'Legacy Title',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=legacy',
+        type: 'youtube',
+        retryMetadata: undefined,
+        // Legacy snapshot: filename holds the title instead of a path.
+        filename: 'Legacy Title',
+      });
+
+      await downloadManager.resumeDownload('paused-legacy');
+      await waitForQueue();
+
+      expect(adoptOrphanResumePathByTitle).toHaveBeenCalledWith(
+        'Legacy Title',
+      );
+      expect(createDownloadTask).toHaveBeenCalledWith(
+        'youtube',
+        'https://www.youtube.com/watch?v=legacy',
+        'paused-legacy',
+        undefined,
+        's2026e092501 - Legacy Title.mp4',
+      );
+    });
+
+    it('should resume with normal planning when legacy adoption finds nothing', async () => {
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-nofile',
+        title: 'No Filename Task',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=nofile',
+        type: 'youtube',
+        retryMetadata: undefined,
+        filename: undefined,
+      });
+
+      await downloadManager.resumeDownload('paused-nofile');
+      await waitForQueue();
+
+      expect(adoptOrphanResumePathByTitle).toHaveBeenCalledWith(
+        'No Filename Task',
+      );
+      // No adopted path: no 5th argument is appended at all.
+      expect(createDownloadTask).toHaveBeenCalledWith(
+        'youtube',
+        'https://www.youtube.com/watch?v=nofile',
+        'paused-nofile',
+        undefined,
+      );
+    });
+
+    it('should write failed history when a paused download cannot be restored', async () => {
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-broken',
+        title: 'Broken paused',
+        timestamp: Date.now(),
+      });
+
+      downloadManager.resumeDownload('paused-broken');
+
+      expect(storageService.removePausedDownload).toHaveBeenCalledWith('paused-broken');
+      expect(createDownloadTask).not.toHaveBeenCalled();
+      expect(storageService.addDownloadHistoryItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'paused-broken',
+          status: 'failed',
+        }),
+      );
+    });
+
+    it('should restore the paused snapshot into the active row on resume', async () => {
+      // Phase 1: pause a task whose active row shows progress 45.
+      const activeDownloadFn = vi.fn().mockImplementation((registerCancel: any) => {
+        registerCancel(vi.fn());
+        return new Promise(() => {});
+      });
+      let activeRow: any = {
+        id: 'resume-snap',
+        title: 'Snapshot task',
+        progress: 45,
+        downloadedSize: '45MB',
+        totalSize: '100MB',
+        filename: 'Snapshot task.mp4',
+      };
+      (storageService.getActiveDownload as any).mockImplementation(() => activeRow);
+      (storageService.removeActiveDownload as any).mockImplementation(() => {
+        activeRow = undefined;
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'resume-snap',
+        'Snapshot task',
+        'https://www.youtube.com/watch?v=snap',
+        'youtube',
+      );
+      running.catch(() => {});
+      await waitForQueue();
+
+      await downloadManager.pauseDownload('resume-snap');
+
+      expect(storageService.addPausedDownload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'resume-snap',
+          progress: 45,
+          downloadedSize: '45MB',
+          totalSize: '100MB',
+          filename: 'Snapshot task.mp4',
+        }),
+      );
+
+      // Phase 2: resume and expect the snapshot to be written back into the
+      // active row so the UI continues from 45% instead of restarting at 0.
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'resume-snap',
+        title: 'Snapshot task',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=snap',
+        type: 'youtube',
+        retryMetadata: undefined,
+        progress: 45,
+        downloadedSize: '45MB',
+        totalSize: '100MB',
+        filename: 'Snapshot task.mp4',
+      });
+
+      downloadManager.resumeDownload('resume-snap');
+      await waitForQueue();
+
+      expect(storageService.updateActiveDownload).toHaveBeenCalledWith(
+        'resume-snap',
+        {
+          progress: 45,
+          downloadedSize: '45MB',
+          totalSize: '100MB',
+          filename: 'Snapshot task.mp4',
+        },
+      );
+    });
+
+    it('should fire the pause hook immediately when the downloader registers cancel late', async () => {
+      let registerCancel: ((cb: any) => void) | undefined;
+      const cancelHook = vi.fn();
+      const activeDownloadFn = vi.fn().mockImplementation((register: any) => {
+        registerCancel = register;
+        return new Promise(() => {});
+      });
+
+      const running = downloadManager.addDownload(
+        activeDownloadFn,
+        'late-pause',
+        'Late pause',
+        'https://www.youtube.com/watch?v=late',
+        'youtube',
+      );
+      running.catch(() => {});
+      await waitForQueue();
+
+      // The pause finalizes before the downloader ever registers a cancel
+      // callback (e.g. it is still in its metadata phase).
+      await downloadManager.pauseDownload('late-pause');
+      expect(storageService.addPausedDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'late-pause' }),
+      );
+
+      // Now the downloader registers - the hook must fire at once with the
+      // pause reason so the downloader stops without cleaning the .part file.
+      registerCancel!(cancelHook);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(cancelHook).toHaveBeenCalledWith('pause');
+    });
+
+    it('should keep the paused row when a task with the same id already exists', () => {
+      downloadManager.setMaxConcurrentDownloads(0);
+      downloadManager.addDownload(
+        vi.fn().mockResolvedValue({ success: true }),
+        'dup-resume',
+        'Duplicate resume',
+        'https://www.youtube.com/watch?v=dup',
+        'youtube',
+      );
+
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'dup-resume',
+        title: 'Duplicate resume',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=dup',
+        type: 'youtube',
+      });
+
+      downloadManager.resumeDownload('dup-resume');
+
+      expect(storageService.removePausedDownload).not.toHaveBeenCalledWith(
+        'dup-resume',
+      );
+      expect(createDownloadTask).not.toHaveBeenCalled();
+    });
+
+    it('should remove a paused download when it is cancelled', async () => {
+      (storageService.getPausedDownload as any).mockReturnValue({
+        id: 'paused-cancel',
+        title: 'Paused cancel',
+        timestamp: Date.now(),
+        sourceUrl: 'https://www.youtube.com/watch?v=pausedcancel',
+        type: 'youtube',
+      });
+
+      await downloadManager.cancelDownload('paused-cancel');
+
+      expect(storageService.removePausedDownload).toHaveBeenCalledWith('paused-cancel');
+      expect(storageService.addDownloadHistoryItem).not.toHaveBeenCalled();
     });
   });
 });

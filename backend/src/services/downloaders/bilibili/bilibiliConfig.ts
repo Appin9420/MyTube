@@ -347,6 +347,9 @@ export function prepareBilibiliDownloadFlags(
   logger.info(`Using merge output format: ${mergeOutputFormat}`);
 
   const flags: BilibiliDownloadFlags = {
+    // Parallel DASH fragment downloads; the user config spread below (N /
+    // concurrent-fragments) overrides this default when present.
+    concurrentFragments: 8,
     ...networkConfig,
     ...safeUserConfig,
     output: outputTemplate,

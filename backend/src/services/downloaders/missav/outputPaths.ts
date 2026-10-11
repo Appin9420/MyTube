@@ -1,5 +1,6 @@
 import path from "path";
 import { IMAGES_DIR, VIDEOS_DIR } from "../../../config/paths";
+import { resolveResumableVideoPath } from "../../../utils/downloadUtils";
 import { formatVideoFilename } from "../../../utils/helpers";
 import { logger } from "../../../utils/logger";
 import {
@@ -20,6 +21,18 @@ import {
 
 function stripTrailingExtension(value: string, extension: string): string {
   return value.endsWith(extension) ? value.slice(0, -extension.length) : value;
+}
+
+/**
+ * Strip the final file extension from a (posix-style) path or filename,
+ * e.g. "dir/Show - Title.mp4" -> "dir/Show - Title". A dot is only treated
+ * as an extension separator when it sits inside the final path segment and
+ * is not a leading dot.
+ */
+function stripLastExtension(value: string): string {
+  const dotIndex = value.lastIndexOf(".");
+  const slashIndex = value.lastIndexOf("/");
+  return dotIndex > slashIndex && dotIndex > 0 ? value.slice(0, dotIndex) : value;
 }
 
 export interface MissAvOutputPaths {
@@ -45,6 +58,7 @@ export function planMissAvOutputPaths(
     url: string;
     mergeOutputFormat: string;
     filenameTemplateSourceOptions?: FilenameTemplateSourceOptions;
+    resumeRelativePath?: string;
   },
 ): MissAvOutputPaths {
   const {
@@ -54,6 +68,7 @@ export function planMissAvOutputPaths(
     url,
     mergeOutputFormat,
     filenameTemplateSourceOptions,
+    resumeRelativePath,
   } = params;
 
   const moveThumbnailsToVideoFolder =
@@ -66,6 +81,48 @@ export function planMissAvOutputPaths(
   let newThumbnailPath: string;
   let finalVideoWebPath: string;
   let finalThumbnailWebPath: string | null;
+
+  // Resume fast-path: a paused snapshot stored this output path and yt-dlp
+  // resume artifacts (.part/.ytdl or the final file) still exist on disk, so
+  // the path must be reused verbatim. The planner and dedupe below MUST be
+  // skipped: the episode counter in season-style templates increments on
+  // every planning call, so re-planning would drift the filename and yt-dlp
+  // would no longer find the old .part/.ytdl artifacts — restarting from zero.
+  const resumed = resolveResumableVideoPath(resumeRelativePath);
+  if (resumed) {
+    finalVideoFilename = path.basename(resumed);
+    newVideoPath = resumed;
+    finalThumbnailFilename = `${stripLastExtension(finalVideoFilename)}.jpg`;
+
+    const videoRelPosix = path
+      .relative(VIDEOS_DIR, newVideoPath)
+      .split(path.sep)
+      .join("/");
+    const thumbRelPosix = `${stripLastExtension(videoRelPosix)}.jpg`;
+
+    const thumbnailDir = moveThumbnailsToVideoFolder ? VIDEOS_DIR : IMAGES_DIR;
+    newThumbnailPath = resolveSafeChildPath(thumbnailDir, thumbRelPosix);
+    finalVideoWebPath = `/videos/${videoRelPosix}`;
+    finalThumbnailWebPath = moveThumbnailsToVideoFolder
+      ? `/videos/${thumbRelPosix}`
+      : `/images/${thumbRelPosix}`;
+
+    ensureDirSafeSync(path.dirname(newVideoPath), VIDEOS_DIR);
+    ensureDirSafeSync(path.dirname(newThumbnailPath), [IMAGES_DIR, VIDEOS_DIR]);
+
+    logger.info(
+      `Resuming download at existing output path: ${videoRelPosix}`,
+    );
+
+    return {
+      finalVideoFilename,
+      finalThumbnailFilename,
+      newVideoPath,
+      newThumbnailPath,
+      finalVideoWebPath,
+      finalThumbnailWebPath,
+    };
+  }
 
   if (presetId !== "legacy") {
     // Non-legacy: use path planner

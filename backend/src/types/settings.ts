@@ -60,6 +60,7 @@ export interface Settings {
   cloudflaredToken?: string;
   allowedHosts?: string;
   pauseOnFocusLoss?: boolean;
+  autoShutdownEnabled?: boolean;
   playSoundOnTaskComplete?: string;
   tmdbApiKey?: string;
   mountDirectories?: string;
@@ -140,6 +141,7 @@ export const defaultSettings: Settings = {
   infiniteScroll: false,
   videoColumns: 4,
   pauseOnFocusLoss: false,
+  autoShutdownEnabled: false,
   playSoundOnTaskComplete: "",
   tmdbApiKey: "",
   showTagsOnThumbnail: true,

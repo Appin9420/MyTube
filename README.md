@@ -63,6 +63,10 @@ Built using the [franklioxygen/agent-workflows](https://github.com/franklioxygen
 
 For installation and usage instructions, please refer to [Browser Extension](documents/en/chrome-extension.md).
 
+## Windows Desktop App (Electron)
+
+A Windows desktop build (Electron shell + bundled local server) is available under `desktop/`. See [desktop/README.md](desktop/README.md) for build and usage instructions.
+
 ## MikMok
 
 [MikMok](https://github.com/franklioxygen/MikMok) is a short-form video web client for MyTube. It connects to MyTube through the API and offers a feed-style viewing experience tailored for short videos.

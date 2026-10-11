@@ -1,13 +1,22 @@
-import { Folder, LocalOffer, ViewSidebar } from '@mui/icons-material';
+import { DriveFileMoveOutline, Folder, LocalOffer, ViewSidebar } from '@mui/icons-material';
 import {
     Alert,
     Avatar,
     Box,
     Button,
+    Checkbox,
     Container,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogTitle,
+    FormControl,
     Grid,
     IconButton,
+    InputLabel,
+    MenuItem,
     Pagination,
+    Select,
     Tooltip,
     Typography
 } from '@mui/material';
@@ -34,7 +43,7 @@ const CollectionPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
-    const { collections, deleteCollection } = useCollection();
+    const { collections, deleteCollection, moveVideosToCollection } = useCollection();
     const { videos, deleteVideo, availableTags: globalAvailableTags, updateVideo } = useVideo();
     const { setPageTagFilter } = usePageTagFilter();
     const { data: settings } = useSettings();
@@ -45,6 +54,12 @@ const CollectionPage: React.FC = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const ITEMS_PER_PAGE = 12;
+
+    const [batchMode, setBatchMode] = useState(false);
+    const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
+    const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+    const [targetCollectionId, setTargetCollectionId] = useState<string>('');
+    const [isMoving, setIsMoving] = useState(false);
 
     const collection = collections.find(c => c.id === id);
     const videosById = useMemo(
@@ -146,6 +161,28 @@ const CollectionPage: React.FC = () => {
         setShowDeleteModal(false);
     };
 
+    const toggleBatchMode = () => {
+        setBatchMode(prev => !prev);
+        setSelectedVideoIds([]);
+    };
+
+    const toggleVideoSelection = (videoId: string) => {
+        setSelectedVideoIds(prev =>
+            prev.includes(videoId) ? prev.filter(v => v !== videoId) : [...prev, videoId]
+        );
+    };
+
+    const handleMoveSelected = async () => {
+        if (!id || !targetCollectionId || selectedVideoIds.length === 0) return;
+        setIsMoving(true);
+        const ok = await moveVideosToCollection(targetCollectionId, selectedVideoIds);
+        setIsMoving(false);
+        if (ok) {
+            setSelectedVideoIds([]);
+            setBatchMode(false);
+            setMoveDialogOpen(false);
+        }
+    };
     const handleSaveCollectionTags = async (newCommonTags: string[]) => {
         if (!collection || collectionVideos.length === 0) return;
 
@@ -273,16 +310,50 @@ const CollectionPage: React.FC = () => {
                         </Box>
 
                         {collectionVideos.length > 0 && (
-                            <SortControl
-                                sortOption={sortOption}
-                                sortAnchorEl={sortAnchorEl}
-                                onSortClick={handleSortClick}
-                                onSortClose={handleSortClose}
-                                sx={{ height: 38 }}
-                            />
+                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                {batchMode && (
+                                    <Button
+                                        variant="contained"
+                                        startIcon={<DriveFileMoveOutline />}
+                                        disabled={selectedVideoIds.length === 0}
+                                        onClick={() => setMoveDialogOpen(true)}
+                                    >
+                                        {t('moveToAnotherCollection')}
+                                    </Button>
+                                )}
+                                <Button
+                                    variant={batchMode ? 'contained' : 'outlined'}
+                                    color={batchMode ? 'warning' : 'primary'}
+                                    size="small"
+                                    sx={{ height: 38 }}
+                                    onClick={toggleBatchMode}
+                                >
+                                    {t('batchTransfer')}
+                                </Button>
+                                <SortControl
+                                    sortOption={sortOption}
+                                    sortAnchorEl={sortAnchorEl}
+                                    onSortClick={handleSortClick}
+                                    onSortClose={handleSortClose}
+                                    sx={{ height: 38 }}
+                                />
+                            </Box>
                         )}
                     </Box>
 
+                    {batchMode && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, flexWrap: 'wrap' }}>
+                            <Typography variant="body2">
+                                {t('selectedCount', { n: selectedVideoIds.length })}
+                            </Typography>
+                            <Button size="small" onClick={() => setSelectedVideoIds(sortedVideos.map(v => v.id))}>
+                                {t('selectAll')}
+                            </Button>
+                            <Button size="small" onClick={() => setSelectedVideoIds([])}>
+                                {t('clearSelection')}
+                            </Button>
+                        </Box>
+                    )}
                     {collectionVideos.length === 0 ? (
                         <Alert severity="info" variant="outlined">{t('noVideosInCollection')}</Alert>
                     ) : sortedVideos.length === 0 ? (
@@ -294,7 +365,15 @@ const CollectionPage: React.FC = () => {
                             <Grid container spacing={3}>
                                 {displayedVideos.map(video => (
                                     <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={video.id}>
-                                        <VideoCard
+                                        <Box sx={{ position: 'relative' }}>
+                                            {batchMode && (
+                                                <Checkbox
+                                                    checked={selectedVideoIds.includes(video.id)}
+                                                    onChange={() => toggleVideoSelection(video.id)}
+                                                    sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, bgcolor: 'background.paper', borderRadius: 1, p: 0.5 }}
+                                                />
+                                            )}
+                                            <VideoCard
                                             video={video}
                                             collections={collections}
                                             onDeleteVideo={deleteVideo}
@@ -303,7 +382,8 @@ const CollectionPage: React.FC = () => {
                                             sourceCollectionId={id}
                                             playbackQueueVideoIds={playbackQueueVideoIds}
                                             showTagsOnThumbnail={showTagsOnThumbnail}
-                                        />
+                                            />
+                                        </Box>
                                     </Grid>
                                 ))}
                             </Grid>
@@ -326,6 +406,37 @@ const CollectionPage: React.FC = () => {
                 </Box>
             </Box>
 
+            <Dialog open={moveDialogOpen} onClose={() => setMoveDialogOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle>{t('moveToAnotherCollection')}</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        {t('selectedCount', { n: selectedVideoIds.length })}
+                    </Typography>
+                    <FormControl fullWidth size="small">
+                        <InputLabel id="move-target-label">{t('targetCollection')}</InputLabel>
+                        <Select
+                            labelId="move-target-label"
+                            value={targetCollectionId}
+                            label={t('targetCollection')}
+                            onChange={(e) => setTargetCollectionId(e.target.value as string)}
+                        >
+                            {collections.filter(c => c.id !== id).map(c => (
+                                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setMoveDialogOpen(false)}>{t('cancel')}</Button>
+                    <Button
+                        variant="contained"
+                        disabled={!targetCollectionId || isMoving}
+                        onClick={handleMoveSelected}
+                    >
+                        {isMoving ? t('moving') : t('confirmMove')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
             <DeleteCollectionModal
                 isOpen={showDeleteModal}
                 onClose={handleCloseDeleteModal}

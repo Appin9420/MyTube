@@ -62,6 +62,10 @@
 
 有关安装和使用说明，请参阅 [浏览器扩展](documents/zh/chrome-extension.md)。
 
+## Windows 桌面应用（Electron）
+
+提供 Windows 桌面版打包（Electron 壳 + 内置本地服务器），位于 `desktop/` 目录。构建与使用说明请参阅 [desktop/README.md](desktop/README.md)。
+
 ## MikMok
 
 [MikMok](https://github.com/franklioxygen/MikMok) 是 MyTube 的短视频 Web 客户端，可通过 API 连接 MyTube，提供更适合短视频浏览的流式观看体验。

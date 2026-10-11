@@ -21,6 +21,7 @@ type DownloadRow = {
   sourceUrl: string | null;
   type: string | null;
   retryMetadata: string | null;
+  phase: string | null;
 };
 
 const MUTABLE_DOWNLOAD_FIELDS: Array<
@@ -35,6 +36,7 @@ const MUTABLE_DOWNLOAD_FIELDS: Array<
   "type",
   "title",
   "retryMetadata",
+  "phase",
 ];
 
 function toOptionalValue<T>(value: T | null): T | undefined {
@@ -54,6 +56,7 @@ function mapDownloadRow(download: DownloadRow): DownloadInfo {
     sourceUrl: toOptionalValue(download.sourceUrl),
     type: toOptionalValue(download.type),
     retryMetadata: toOptionalValue(download.retryMetadata),
+    phase: toOptionalValue(download.phase),
   };
 }
 
@@ -147,6 +150,15 @@ export function setQueuedDownloads(queuedDownloads: DownloadInfo[]): void {
         .all();
 
       for (const download of latestQueuedById.values()) {
+        // Queued rows may carry a paused snapshot (a resumed task waiting in
+        // the queue). Tasks without one get their progress fields cleared so
+        // stale values cannot linger on a reused row.
+        const snapshotFields = {
+          progress: download.progress ?? null,
+          downloadedSize: download.downloadedSize ?? null,
+          totalSize: download.totalSize ?? null,
+          filename: download.filename ?? null,
+        };
         db.insert(downloads)
           .values({
             id: download.id,
@@ -156,6 +168,7 @@ export function setQueuedDownloads(queuedDownloads: DownloadInfo[]): void {
             sourceUrl: download.sourceUrl,
             type: download.type,
             retryMetadata: download.retryMetadata,
+            ...snapshotFields,
           })
           .onConflictDoUpdate({
             target: downloads.id,
@@ -166,6 +179,7 @@ export function setQueuedDownloads(queuedDownloads: DownloadInfo[]): void {
               sourceUrl: download.sourceUrl,
               type: download.type,
               retryMetadata: download.retryMetadata,
+              ...snapshotFields,
             },
           })
           .run();
@@ -193,6 +207,77 @@ export function setQueuedDownloads(queuedDownloads: DownloadInfo[]): void {
   }
 }
 
+export function addPausedDownload(info: DownloadInfo): void {
+  try {
+    db.insert(downloads)
+      .values({
+        id: info.id,
+        title: info.title,
+        timestamp: info.timestamp,
+        status: "paused",
+        sourceUrl: info.sourceUrl,
+        type: info.type,
+        retryMetadata: info.retryMetadata,
+        filename: info.filename,
+        progress: info.progress,
+        downloadedSize: info.downloadedSize,
+        totalSize: info.totalSize,
+      })
+      .onConflictDoUpdate({
+        target: downloads.id,
+        set: {
+          title: info.title,
+          timestamp: info.timestamp,
+          status: "paused",
+          sourceUrl: info.sourceUrl,
+          type: info.type,
+          retryMetadata: info.retryMetadata,
+          filename: info.filename,
+          progress: info.progress,
+          downloadedSize: info.downloadedSize,
+          totalSize: info.totalSize,
+        },
+      })
+      .run();
+  } catch (error) {
+    logger.error("Error adding paused download", error instanceof Error ? error : new Error(String(error)));
+    // Don't throw - download tracking is non-critical
+  }
+}
+
+export function removePausedDownload(id: string): void {
+  try {
+    db.delete(downloads)
+      .where(and(eq(downloads.id, id), eq(downloads.status, "paused")))
+      .run();
+  } catch (error) {
+    logger.error("Error removing paused download", error instanceof Error ? error : new Error(String(error)));
+    // Don't throw - download tracking is non-critical
+  }
+}
+
+export function getPausedDownload(id: string): DownloadInfo | undefined {
+  try {
+    const download = db
+      .select()
+      .from(downloads)
+      .where(and(eq(downloads.id, id), eq(downloads.status, "paused")))
+      .get();
+
+    if (download) {
+      return mapDownloadRow(download);
+    }
+
+    return undefined;
+  } catch (error) {
+    logger.error(
+      "Error getting paused download",
+      error instanceof Error ? error : new Error(String(error))
+    );
+    return undefined;
+  }
+}
+
 export function getDownloadStatus(): DownloadStatus {
   try {
     cleanupStaleActiveDownloadsIfNeeded(Date.now());
@@ -211,11 +296,19 @@ export function getDownloadStatus(): DownloadStatus {
       .all()
       .map(mapDownloadRow);
 
-    return { activeDownloads, queuedDownloads };
+    const pausedDownloads = db
+      .select()
+      .from(downloads)
+      .where(eq(downloads.status, "paused"))
+      .all()
+      .map(mapDownloadRow)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    return { activeDownloads, queuedDownloads, pausedDownloads };
   } catch (error) {
     logger.error("Error reading download status", error instanceof Error ? error : new Error(String(error)));
     // Return empty arrays for backward compatibility
-    return { activeDownloads: [], queuedDownloads: [] };
+    return { activeDownloads: [], queuedDownloads: [], pausedDownloads: [] };
   }
 }
 

@@ -78,3 +78,14 @@ codeql-reports/
 # Reports
 reports/*
 .lighthouseci/
+
+# Desktop (Electron) packaging
+desktop/release
+desktop/build
+
+# Local debug artifacts
+.curl-cookies.txt
+.echo-test.txt
+.headers.txt
+.node-test.txt
+.out.txt

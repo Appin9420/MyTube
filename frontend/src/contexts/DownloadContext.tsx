@@ -54,6 +54,7 @@ interface SubscribeInfo {
 interface DownloadContextType {
     activeDownloads: DownloadInfo[];
     queuedDownloads: DownloadInfo[];
+    pausedDownloads: DownloadInfo[];
     handleVideoSubmit: (
         videoUrl: string,
         skipCollectionCheck?: boolean,
@@ -82,6 +83,16 @@ export const useDownload = () => {
     return context;
 };
 
+// Validate a stored download list: it must be an array of objects with a
+// non-empty string id. Malformed entries (corrupted localStorage data) are dropped.
+const sanitizeStoredDownloadList = (value: any): DownloadInfo[] => {
+    if (!Array.isArray(value)) return [];
+    return value.filter(
+        (item: any) =>
+            item && typeof item === 'object' && typeof item.id === 'string' && item.id.length > 0
+    );
+};
+
 // Helper function to get download status from localStorage
 const getStoredDownloadStatus = () => {
     for (const storageId of DOWNLOAD_STATUS_STORAGE_IDS) {
@@ -97,7 +108,12 @@ const getStoredDownloadStatus = () => {
                 continue;
             }
 
-            return parsedStatus;
+            return {
+                ...parsedStatus,
+                activeDownloads: sanitizeStoredDownloadList(parsedStatus.activeDownloads),
+                queuedDownloads: sanitizeStoredDownloadList(parsedStatus.queuedDownloads),
+                pausedDownloads: sanitizeStoredDownloadList(parsedStatus.pausedDownloads),
+            };
         } catch (error) {
             console.error('Error parsing download status from localStorage:', error);
             localStorage.removeItem(storageId);
@@ -152,7 +168,7 @@ export const DownloadProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             // Keep low-frequency polling even when idle so tasks submitted from external API clients appear in UI.
             return hasActive || hasQueued ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
         },
-        initialData: initialStatus || { activeDownloads: [], queuedDownloads: [] },
+        initialData: initialStatus || { activeDownloads: [], queuedDownloads: [], pausedDownloads: [] },
         // Always fetch fresh data on mount to ensure we have the latest server state
         refetchOnMount: 'always',
         staleTime: 1000, // Consider data stale after 1 second
@@ -170,6 +186,7 @@ export const DownloadProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const activeDownloads = React.useMemo(() => downloadStatus.activeDownloads || [], [downloadStatus.activeDownloads]);
     const queuedDownloads = React.useMemo(() => downloadStatus.queuedDownloads || [], [downloadStatus.queuedDownloads]);
+    const pausedDownloads = React.useMemo(() => downloadStatus.pausedDownloads || [], [downloadStatus.pausedDownloads]);
 
     // Bilibili multi-part video state
     const [showBilibiliPartsModal, setShowBilibiliPartsModal] = useState<boolean>(false);
@@ -191,11 +208,14 @@ export const DownloadProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             ...activeDownloads.map((d: DownloadInfo) => d.id),
             ...queuedDownloads.map((d: DownloadInfo) => d.id)
         ]);
+        // IDs that moved into the paused list are not "completed" - they left the
+        // active/queued lists but will come back when resumed.
+        const pausedIds = new Set<string>(pausedDownloads.map((d: DownloadInfo) => d.id));
 
         let hasCompleted = false;
         if (currentDownloadIdsRef.current.size > 0) {
             for (const id of currentDownloadIdsRef.current) {
-                if (!newIds.has(id)) {
+                if (!newIds.has(id) && !pausedIds.has(id)) {
                     hasCompleted = true;
                     break;
                 }
@@ -215,17 +235,18 @@ export const DownloadProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
         }
 
-        if (activeDownloads.length > 0 || queuedDownloads.length > 0) {
+        if (activeDownloads.length > 0 || queuedDownloads.length > 0 || pausedDownloads.length > 0) {
             const statusData = {
                 activeDownloads,
                 queuedDownloads,
+                pausedDownloads,
                 timestamp: Date.now()
             };
             localStorage.setItem(DOWNLOAD_STATUS_STORAGE_ID, JSON.stringify(statusData));
         } else {
             localStorage.removeItem(DOWNLOAD_STATUS_STORAGE_ID);
         }
-    }, [activeDownloads, queuedDownloads, fetchVideos, settings]);
+    }, [activeDownloads, queuedDownloads, pausedDownloads, fetchVideos, settings]);
 
     const checkBackendDownloadStatus = async () => {
         await queryClient.invalidateQueries({ queryKey: ['downloadStatus'] });
@@ -667,6 +688,7 @@ export const DownloadProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         <DownloadContext.Provider value={{
             activeDownloads,
             queuedDownloads,
+            pausedDownloads,
             handleVideoSubmit,
             showBilibiliPartsModal,
             setShowBilibiliPartsModal,

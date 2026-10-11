@@ -1,6 +1,9 @@
 export const DEFAULT_YT_DLP_PATH = "yt-dlp";
 export const YT_DLP_JS_RUNTIME_ENV = "YT_DLP_JS_RUNTIME";
-export const YT_DLP_HELP_PROBE_TIMEOUT_MS = 5000;
+// PyInstaller one-file builds (the official yt-dlp.exe) and Python launchers
+// can take several seconds to start on a cold cache under antivirus scanning,
+// so give the version probe generous headroom.
+export const YT_DLP_HELP_PROBE_TIMEOUT_MS = 15000;
 export const YT_DLP_STALE_AFTER_DAYS = 90;
 export const DEFAULT_YOUTUBE_PLAYER_CLIENT_EXTRACTOR_ARG =
   "youtube:player_client=default,mweb";

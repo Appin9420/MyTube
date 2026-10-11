@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatVideoFilename } from "../../../utils/helpers";
-import { DownloadCancelledError } from "../../../errors/DownloadErrors";
+import {
+  DownloadCancelledError,
+  DownloadPausedError,
+} from "../../../errors/DownloadErrors";
 
 const mocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
@@ -315,14 +318,20 @@ describe("bilibiliVideo.downloadSinglePart", () => {
     );
 
     expect(result.success).toBe(true);
+    // The downloader must NOT write progress: 0 on start: on resume the
+    // manager pre-writes the paused snapshot's progress into the active row,
+    // and a 0 here would wipe it (download appears to restart from scratch).
     expect(mocks.updateActiveDownload).toHaveBeenCalledWith(
       "download-1",
       expect.objectContaining({
         title: "Mock Title",
         filename: "Mock Title",
-        progress: 0,
       }),
     );
+    const firstUpdate = mocks.updateActiveDownload.mock.calls[0]?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstUpdate).not.toHaveProperty("progress");
     expect(mocks.updateVideo).toHaveBeenCalledWith(
       "existing-video",
       expect.objectContaining({
@@ -744,6 +753,36 @@ describe("bilibiliVideo.downloadSinglePart", () => {
 
     expect(mocks.saveVideo).not.toHaveBeenCalled();
     expect(mocks.organizeVideoByAuthor).not.toHaveBeenCalled();
+  });
+
+  it("propagates a pause error instead of recording a failed episode and keeps the temp dir", async () => {
+    // Pausing kills the yt-dlp subprocess; the rejection must reach
+    // downloadSinglePart as DownloadPausedError (not a failure result) so the
+    // collection loop aborts, and the temp dir must be kept so yt-dlp can
+    // resume into its .part files later.
+    const pausedSubprocess: any = Promise.reject(DownloadPausedError.create());
+    // The rejection is only awaited after executeYtDlpJson resolves; mark the
+    // promise handled so it cannot fire an unhandledRejection in that window.
+    pausedSubprocess.catch(() => {});
+    pausedSubprocess.stdout = { on: vi.fn() };
+    pausedSubprocess.stderr = { on: vi.fn() };
+    pausedSubprocess.kill = vi.fn();
+    mocks.executeYtDlpSpawn.mockReturnValue(pausedSubprocess);
+
+    await expect(
+      downloadSinglePart(
+        "https://www.bilibili.com/video/BV1paused",
+        1,
+        2,
+        "Series",
+        "download-paused",
+      ),
+    ).rejects.toBeInstanceOf(DownloadPausedError);
+
+    expect(mocks.cleanupTempDir).not.toHaveBeenCalled();
+    expect(mocks.cleanupFilesOnCancellation).not.toHaveBeenCalled();
+    expect(mocks.renameFilesWithMetadata).not.toHaveBeenCalled();
+    expect(mocks.saveVideo).not.toHaveBeenCalled();
   });
 
   it("uses zero-padded multipart prefixes for legacy filenames and subtitles", async () => {

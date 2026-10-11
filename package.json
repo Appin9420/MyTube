@@ -23,6 +23,10 @@
     "test:frontend:watch": "cd frontend && npm run test:watch",
     "test:backend": "cd backend && npm run test",
     "test:backend:watch": "cd backend && npm run test:watch",
+    "desktop:dev": "concurrently -k --names web,shell \"npm run dev\" \"npm run --prefix desktop dev\"",
+    "desktop:start": "npm run --prefix desktop start",
+    "desktop:build:dir": "npm run --prefix desktop build:dir",
+    "desktop:build": "npm run --prefix desktop build",
     "codacy:report": "node scripts/codacy/generate-issues-report.mjs"
   },
   "engines": {

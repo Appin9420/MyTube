@@ -704,6 +704,21 @@ export const ru = {
   loadingCollection: "Загрузка коллекции...",
   collectionNotFound: "Коллекция не найдена",
   noVideosInCollection: "В этой коллекции нет видео.",
+  autoShutdownTitle: 'Auto shutdown when downloads finish',
+  autoShutdownDescription: 'When enabled and all download tasks finish, the computer will shut down in 60 seconds. Toggle the switch off again to cancel a pending shutdown.',
+  batchTransfer: 'Batch transfer',
+  moveToAnotherCollection: 'Move to another collection',
+  targetCollection: 'Target collection',
+  selectedCount: '{n} selected',
+  selectAll: 'Select all',
+  clearSelection: 'Clear',
+  confirmMove: 'Move',
+  moving: 'Moving...',
+  videosMovedToCollection: 'Videos moved successfully',
+  failedToMoveVideos: 'Failed to move videos',
+  mergeDuplicates: 'Merge duplicate collections',
+  mergeDone: 'Merge complete',
+  mergeFailed: 'Merge failed',
   back: "Назад",
 
 
@@ -825,6 +840,15 @@ export const ru = {
   allPartsAddedToCollection: "Все части будут добавлены в эту коллекцию",
   allVideosAddedToCollection: "Все видео будут добавлены в эту коллекцию",
   queued: "В очереди",
+
+  pausedDownloads: "Приостановлено",
+
+  downloadPaused: "Загрузка приостановлена",
+
+  downloadResumed: "Загрузка возобновлена",
+
+
+  downloadMerging: "Объединение сегментов…",
   waitingInQueue: "Ожидание в очереди",
 
 

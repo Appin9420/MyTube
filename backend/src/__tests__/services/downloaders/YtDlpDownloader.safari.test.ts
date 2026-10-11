@@ -187,13 +187,24 @@ describe('YtDlpDownloader format defaults', () => {
             'download-yt',
         );
 
-        expect(storageService.updateActiveDownload).toHaveBeenCalledWith(
-            'download-yt',
-            expect.objectContaining({
-                title: 'Test Video',
-                filename: 'Test Video',
-                progress: 0,
-            }),
-        );
+        const calls = (storageService.updateActiveDownload as any).mock
+            .calls as Array<[string, Record<string, unknown>]>;
+
+        // Title is written as soon as metadata is known, WITHOUT a filename:
+        // the real output path is written separately after planning so a pause
+        // snapshot always carries a resumable filename (never the raw title).
+        const titleUpdate = calls.find(([, payload]) => payload.title === 'Test Video');
+        expect(titleUpdate).toBeDefined();
+        expect(titleUpdate![1]).not.toHaveProperty('filename');
+
+        // After planning, the actual output path (relative to VIDEOS_DIR) is
+        // stored so cleanup protection and resume reuse target the real file.
+        const filenameUpdate = calls.find(([, payload]) => 'filename' in payload);
+        expect(filenameUpdate).toBeDefined();
+
+        // No progress: 0 write on start — on resume the manager pre-writes the
+        // paused snapshot's progress into the active row and a 0 would wipe it.
+        const firstUpdate = calls[0]?.[1] as Record<string, unknown> | undefined;
+        expect(firstUpdate).not.toHaveProperty('progress');
     });
 });

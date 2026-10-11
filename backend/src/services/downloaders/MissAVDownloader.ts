@@ -6,7 +6,10 @@ import puppeteer from "puppeteer";
 import { DATA_DIR, IMAGES_DIR, VIDEOS_DIR } from "../../config/paths";
 import {
   DownloadCancelledError,
+  DownloadPausedError,
   isCancelledError,
+  isPausedError,
+  type DownloadStopReason,
 } from "../../errors/DownloadErrors";
 import { cleanupTemporaryFiles, safeRemove } from "../../utils/downloadUtils";
 import {
@@ -115,6 +118,7 @@ export class MissAVDownloader extends BaseDownloader {
       options?.downloadId,
       options?.onStart,
       options?.filenameTemplateSourceOptions,
+      options?.resumeOutputPath,
     );
   }
 
@@ -124,10 +128,12 @@ export class MissAVDownloader extends BaseDownloader {
     downloadId?: string,
     onStart?: (cancel: () => void) => void,
     filenameTemplateSourceOptions?: FilenameTemplateSourceOptions,
+    resumeOutputPath?: string,
   ): Promise<Video> {
     logger.info("Detected MissAV-family URL:", url);
 
     const timestamp = Date.now();
+    let stopReason: DownloadStopReason | undefined;
 
     // Ensure directories exist
     fs.ensureDirSync(VIDEOS_DIR);
@@ -333,6 +339,7 @@ export class MissAVDownloader extends BaseDownloader {
         url,
         mergeOutputFormat,
         filenameTemplateSourceOptions,
+        resumeRelativePath: resumeOutputPath,
       });
 
       // 7. Download the video using yt-dlp with the m3u8 URL
@@ -341,15 +348,32 @@ export class MissAVDownloader extends BaseDownloader {
       logger.info("Download ID:", downloadId);
 
       if (downloadId) {
+        // Note: no progress reset here. On resume the manager pre-writes the
+        // paused snapshot's progress into the active row; writing progress: 0
+        // would wipe it and make the download appear to restart from scratch.
+        //
+        // Note: no filename here. The real output path is only known after
+        // planMissAvOutputPaths above; persisting the raw title would corrupt
+        // the paused snapshot's resume path.
         storageService.updateActiveDownload(downloadId, {
           title: videoTitle,
-          filename: videoTitle,
-          progress: 0,
         });
       } else {
         logger.warn(
           "[MissAV] Warning: downloadId is not set, progress updates will not work!",
         );
+      }
+
+      // Persist the real output path (relative to VIDEOS_DIR) so the next
+      // pause snapshot stores a path that resolveResumableVideoPath can map
+      // back onto the existing .part/.ytdl artifacts on resume.
+      if (downloadId) {
+        storageService.updateActiveDownload(downloadId, {
+          filename: path
+            .relative(VIDEOS_DIR, newVideoPath)
+            .split(path.sep)
+            .join("/"),
+        });
       }
 
       // Get format sort option if user specified it
@@ -412,6 +436,11 @@ export class MissAVDownloader extends BaseDownloader {
       // Prepare flags object - merge user config with required settings
       const flags: any = {
         ...networkConfig, // Apply network settings (proxy, etc.)
+        // Parallel HLS fragment downloads: serial fragments cap at a single
+        // connection's throughput. User config (-N / --concurrent-fragments)
+        // overrides this default.
+        concurrentFragments:
+          userConfig.N ?? userConfig.concurrentFragments ?? 8,
         output: newVideoPath,
         format: downloadFormat,
         mergeOutputFormat: mergeOutputFormat,
@@ -524,10 +553,16 @@ export class MissAVDownloader extends BaseDownloader {
           });
 
           if (onStart) {
-            onStart(async () => {
+            onStart(async (reason?: DownloadStopReason) => {
+              stopReason = reason ?? "cancel";
               cancellationRequested = true;
               logger.info("Killing subprocess for download:", downloadId);
               child.kill();
+
+              // On pause, keep .part/.ytdl artifacts so the download can resume.
+              if (stopReason === "pause") {
+                return;
+              }
 
               // Clean up temporary files created by yt-dlp (*.part, *.ytdl, etc.)
               logger.info("Cleaning up temporary files...");
@@ -538,6 +573,9 @@ export class MissAVDownloader extends BaseDownloader {
 
         logger.info("Video downloaded successfully");
       } catch (err: any) {
+        if (stopReason === "pause" || isPausedError(err)) {
+          throw DownloadPausedError.create();
+        }
         // Use base class helper for cancellation handling
         const downloader = new MissAVDownloader();
         await downloader.handleCancellationError(err, async () => {
@@ -552,6 +590,9 @@ export class MissAVDownloader extends BaseDownloader {
       try {
         downloader.throwIfCancelled(downloadId);
       } catch (error) {
+        if (stopReason === "pause" || isPausedError(error)) {
+          throw DownloadPausedError.create();
+        }
         await cleanupTemporaryFiles(newVideoPath);
         throw error;
       }
@@ -667,6 +708,11 @@ export class MissAVDownloader extends BaseDownloader {
       });
       return videoData;
     } catch (error: any) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        // Pausing keeps .part/.ytdl artifacts (and the not-yet-started cleanup
+        // paths above) so the download can resume without re-downloading.
+        throw DownloadPausedError.create();
+      }
       if (isCancelledError(error)) {
         logger.info("MissAV-family download cancelled:", { downloadId });
         throw error;

@@ -1,9 +1,14 @@
 export const YT_DLP_PATH = process.env.YT_DLP_PATH || "yt-dlp";
 export const MISSAV_PROGRESS_LOG_INTERVAL_MS = 10_000;
 
-export const ALLOWED_MISSAV_LANGUAGE_SEGMENTS = new Set(["en", "ja", "zh", "ko"]);
-export const ALLOWED_ROUTED_VIDEO_LANGUAGE_SEGMENTS = new Set([
-  ...ALLOWED_MISSAV_LANGUAGE_SEGMENTS,
+// Language path segments missav-family sites actually serve, e.g.
+// https://missav.ai/cn/... or a mirror prefix like https://missav.ai/dm2/cn/...
+export const ALLOWED_MISSAV_LANGUAGE_SEGMENTS = new Set([
+  "en",
+  "ja",
+  "zh",
+  "cn",
+  "ko",
   "th",
   "ms",
   "de",
@@ -12,6 +17,9 @@ export const ALLOWED_ROUTED_VIDEO_LANGUAGE_SEGMENTS = new Set([
   "id",
   "fil",
   "hi",
+]);
+export const ALLOWED_ROUTED_VIDEO_LANGUAGE_SEGMENTS = new Set([
+  ...ALLOWED_MISSAV_LANGUAGE_SEGMENTS,
 ]);
 
 export const MISSAV_NAVIGATION_ORIGINS: Record<string, string> = {

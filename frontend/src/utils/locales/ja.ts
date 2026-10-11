@@ -706,6 +706,21 @@ export const ja = {
   loadingCollection: "コレクションを読み込み中...",
   collectionNotFound: "コレクションが見つかりません",
   noVideosInCollection: "このコレクションには動画がありません。",
+  autoShutdownTitle: 'Auto shutdown when downloads finish',
+  autoShutdownDescription: 'When enabled and all download tasks finish, the computer will shut down in 60 seconds. Toggle the switch off again to cancel a pending shutdown.',
+  batchTransfer: 'Batch transfer',
+  moveToAnotherCollection: 'Move to another collection',
+  targetCollection: 'Target collection',
+  selectedCount: '{n} selected',
+  selectAll: 'Select all',
+  clearSelection: 'Clear',
+  confirmMove: 'Move',
+  moving: 'Moving...',
+  videosMovedToCollection: 'Videos moved successfully',
+  failedToMoveVideos: 'Failed to move videos',
+  mergeDuplicates: 'Merge duplicate collections',
+  mergeDone: 'Merge complete',
+  mergeFailed: 'Merge failed',
   back: "戻る",
 
 
@@ -828,6 +843,15 @@ export const ja = {
   allPartsAddedToCollection: "すべてのパートがこのコレクションに追加されます",
   allVideosAddedToCollection: "すべての動画がこのコレクションに追加されます",
   queued: "キューに追加済み",
+
+  pausedDownloads: "一時停止中",
+
+  downloadPaused: "ダウンロードを一時停止しました",
+
+  downloadResumed: "ダウンロードを再開しました",
+
+
+  downloadMerging: "セグメントを結合中…",
   waitingInQueue: "待機中",
 
 

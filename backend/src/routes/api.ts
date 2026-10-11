@@ -194,6 +194,16 @@ const apiRouteDefinitions: ApiRouteDefinition[] = [
     handlers: [asyncHandler(downloadController.cancelDownload)],
   },
   {
+    method: "post",
+    path: "/downloads/pause/:id",
+    handlers: [asyncHandler(downloadController.pauseDownload)],
+  },
+  {
+    method: "post",
+    path: "/downloads/resume/:id",
+    handlers: [asyncHandler(downloadController.resumeDownload)],
+  },
+  {
     method: "delete",
     path: "/downloads/queue/:id",
     handlers: [asyncHandler(downloadController.removeFromQueue)],
@@ -235,6 +245,16 @@ const apiRouteDefinitions: ApiRouteDefinition[] = [
     method: "put",
     path: "/collections/:id",
     handlers: [asyncHandler(collectionController.updateCollection)],
+  },
+  {
+    method: "post",
+    path: "/collections/merge-duplicates",
+    handlers: [asyncHandler(collectionController.mergeDuplicateCollections)],
+  },
+  {
+    method: "post",
+    path: "/collections/:id/videos/move",
+    handlers: [asyncHandler(collectionController.moveVideosToCollection)],
   },
   {
     method: "delete",

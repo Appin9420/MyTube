@@ -714,6 +714,21 @@ export const es = {
   loadingCollection: "Cargando colección...",
   collectionNotFound: "Colección no encontrada",
   noVideosInCollection: "No hay videos en esta colección.",
+  autoShutdownTitle: 'Auto shutdown when downloads finish',
+  autoShutdownDescription: 'When enabled and all download tasks finish, the computer will shut down in 60 seconds. Toggle the switch off again to cancel a pending shutdown.',
+  batchTransfer: 'Batch transfer',
+  moveToAnotherCollection: 'Move to another collection',
+  targetCollection: 'Target collection',
+  selectedCount: '{n} selected',
+  selectAll: 'Select all',
+  clearSelection: 'Clear',
+  confirmMove: 'Move',
+  moving: 'Moving...',
+  videosMovedToCollection: 'Videos moved successfully',
+  failedToMoveVideos: 'Failed to move videos',
+  mergeDuplicates: 'Merge duplicate collections',
+  mergeDone: 'Merge complete',
+  mergeFailed: 'Merge failed',
   back: "Volver",
 
 
@@ -837,6 +852,15 @@ export const es = {
   allPartsAddedToCollection: "Todas las partes se agregarán a esta colección",
   allVideosAddedToCollection: "Todos los videos se agregarán a esta colección",
   queued: "En cola",
+
+  pausedDownloads: "Pausados",
+
+  downloadPaused: "Descarga pausada",
+
+  downloadResumed: "Descarga reanudada",
+
+
+  downloadMerging: "Fusionando segmentos…",
   waitingInQueue: "Esperando en cola",
 
 

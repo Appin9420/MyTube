@@ -33,7 +33,7 @@ const DownloadPage: React.FC = () => {
     const { t } = useLanguage();
     const { showSnackbar } = useSnackbar();
     const { userRole, loginRequired } = useAuth();
-    const { activeDownloads, queuedDownloads, handleVideoSubmit } = useDownload();
+    const { activeDownloads, queuedDownloads, pausedDownloads, handleVideoSubmit } = useDownload();
     const queryClient = useQueryClient();
     const [tabValue, setTabValue] = useState(0);
     const [showBatchModal, setShowBatchModal] = useState(false);
@@ -100,6 +100,7 @@ const DownloadPage: React.FC = () => {
                     ...old,
                     activeDownloads: old.activeDownloads.filter((d: any) => d.id !== id),
                     queuedDownloads: old.queuedDownloads.filter((d: any) => d.id !== id),
+                    pausedDownloads: (old.pausedDownloads || []).filter((d: any) => d.id !== id),
                 };
             });
             return { previousStatus };
@@ -120,6 +121,89 @@ const DownloadPage: React.FC = () => {
 
     const handleCancelDownload = (id: string) => {
         cancelMutation.mutate(id);
+    };
+
+    // Pause download mutation (works for both active and queued downloads)
+    const pauseMutation = useMutation({
+        mutationFn: async (id: string) => {
+            await api.post(`/downloads/pause/${id}`);
+        },
+        onMutate: async (id: string) => {
+            await queryClient.cancelQueries({ queryKey: ['downloadStatus'] });
+            const previousStatus = queryClient.getQueryData(['downloadStatus']);
+            queryClient.setQueryData(['downloadStatus'], (old: any) => {
+                if (!old) return old;
+                const pausedItem =
+                    old.activeDownloads.find((d: any) => d.id === id)
+                    || old.queuedDownloads.find((d: any) => d.id === id);
+                if (!pausedItem) return old;
+                return {
+                    ...old,
+                    activeDownloads: old.activeDownloads.filter((d: any) => d.id !== id),
+                    queuedDownloads: old.queuedDownloads.filter((d: any) => d.id !== id),
+                    pausedDownloads: [...(old.pausedDownloads || []), pausedItem],
+                };
+            });
+            return { previousStatus };
+        },
+        onError: (_err, _id, context) => {
+            if (context?.previousStatus) {
+                queryClient.setQueryData(['downloadStatus'], context.previousStatus);
+            }
+            showSnackbar(t('error') || 'Error');
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['downloadStatus'] });
+        },
+        onSuccess: () => {
+            showSnackbar(t('downloadPaused') || 'Download paused');
+        },
+    });
+
+    const handlePauseDownload = (id: string) => {
+        pauseMutation.mutate(id);
+    };
+
+    // Resume paused download mutation
+    const resumeMutation = useMutation({
+        mutationFn: async (id: string) => {
+            await api.post(`/downloads/resume/${id}`);
+        },
+        onMutate: async (id: string) => {
+            await queryClient.cancelQueries({ queryKey: ['downloadStatus'] });
+            const previousStatus = queryClient.getQueryData(['downloadStatus']);
+            queryClient.setQueryData(['downloadStatus'], (old: any) => {
+                if (!old) return old;
+                // Move the item back into the active list keeping all its fields
+                // (progress, sizes, title) so it stays visible at its previous
+                // progress instead of disappearing until the next poll.
+                const resumedItem = (old.pausedDownloads || []).find((d: any) => d.id === id);
+                return {
+                    ...old,
+                    activeDownloads: resumedItem
+                        ? [...old.activeDownloads.filter((d: any) => d.id !== id), resumedItem]
+                        : old.activeDownloads,
+                    pausedDownloads: (old.pausedDownloads || []).filter((d: any) => d.id !== id),
+                };
+            });
+            return { previousStatus };
+        },
+        onError: (_err, _id, context) => {
+            if (context?.previousStatus) {
+                queryClient.setQueryData(['downloadStatus'], context.previousStatus);
+            }
+            showSnackbar(t('error') || 'Error');
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['downloadStatus'] });
+        },
+        onSuccess: () => {
+            showSnackbar(t('downloadResumed') || 'Download resumed');
+        },
+    });
+
+    const handleResumeDownload = (id: string) => {
+        resumeMutation.mutate(id);
     };
 
     // Remove from queue mutation
@@ -328,14 +412,19 @@ const DownloadPage: React.FC = () => {
                 <ActiveDownloadsTab
                     downloads={activeDownloads}
                     onCancel={handleCancelDownload}
+                    onPause={handlePauseDownload}
                 />
             </CustomTabPanel>
 
             <CustomTabPanel value={tabValue} index={1}>
                 <QueueTab
                     downloads={queuedDownloads}
+                    pausedDownloads={pausedDownloads}
                     onRemove={handleRemoveFromQueue}
                     onClear={handleClearQueue}
+                    onPause={handlePauseDownload}
+                    onResume={handleResumeDownload}
+                    onDeletePaused={handleCancelDownload}
                 />
             </CustomTabPanel>
 

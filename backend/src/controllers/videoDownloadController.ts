@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { isCancelledError, ValidationError } from "../errors/DownloadErrors";
+import { isCancelledError, isPausedError, ValidationError } from "../errors/DownloadErrors";
 import downloadManager from "../services/downloadManager";
 import { buildBilibiliDownloadTask } from "../services/bilibiliDownloadTask";
 import {
@@ -427,6 +427,14 @@ export const downloadVideo = async (
       .catch((error: any) => {
         if (isCancelledError(error)) {
           logger.info("Download cancelled:", {
+            downloadId,
+            title: initialTitle,
+          });
+          return;
+        }
+
+        if (isPausedError(error)) {
+          logger.info("Download paused:", {
             downloadId,
             title: initialTitle,
           });

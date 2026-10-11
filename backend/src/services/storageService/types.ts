@@ -44,6 +44,7 @@ export interface DownloadInfo {
   sourceUrl?: string;
   type?: string;
   retryMetadata?: string;
+  phase?: string;
 }
 
 export interface DownloadHistoryItem {
@@ -98,4 +99,5 @@ export interface VideoDownloadCheckResult {
 export interface DownloadStatus {
   activeDownloads: DownloadInfo[];
   queuedDownloads: DownloadInfo[];
+  pausedDownloads: DownloadInfo[];
 }

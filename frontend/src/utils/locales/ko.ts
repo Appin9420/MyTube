@@ -694,6 +694,21 @@ export const ko = {
   loadingCollection: "컬렉션 로드 중...",
   collectionNotFound: "컬렉션을 찾을 수 없음",
   noVideosInCollection: "이 컬렉션에는 동영상이 없습니다.",
+  autoShutdownTitle: 'Auto shutdown when downloads finish',
+  autoShutdownDescription: 'When enabled and all download tasks finish, the computer will shut down in 60 seconds. Toggle the switch off again to cancel a pending shutdown.',
+  batchTransfer: 'Batch transfer',
+  moveToAnotherCollection: 'Move to another collection',
+  targetCollection: 'Target collection',
+  selectedCount: '{n} selected',
+  selectAll: 'Select all',
+  clearSelection: 'Clear',
+  confirmMove: 'Move',
+  moving: 'Moving...',
+  videosMovedToCollection: 'Videos moved successfully',
+  failedToMoveVideos: 'Failed to move videos',
+  mergeDuplicates: 'Merge duplicate collections',
+  mergeDone: 'Merge complete',
+  mergeFailed: 'Merge failed',
   back: "뒤로",
 
 
@@ -814,6 +829,15 @@ export const ko = {
   allPartsAddedToCollection: "모든 파트가 이 컬렉션에 추가됩니다",
   allVideosAddedToCollection: "모든 동영상이 이 컬렉션에 추가됩니다",
   queued: "대기열에 추가됨",
+
+  pausedDownloads: "일시정지됨",
+
+  downloadPaused: "다운로드가 일시정지되었습니다",
+
+  downloadResumed: "다운로드가 재개되었습니다",
+
+
+  downloadMerging: "세그먼트 병합 중…",
   waitingInQueue: "대기 중",
 
 

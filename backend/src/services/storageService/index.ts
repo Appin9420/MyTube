@@ -10,9 +10,12 @@ export { initializeStorage } from "./initialization";
 // Download Status
 export {
     addActiveDownload,
+    addPausedDownload,
     getActiveDownload,
     getDownloadStatus,
+    getPausedDownload,
     removeActiveDownload,
+    removePausedDownload,
     setQueuedDownloads,
     updateActiveDownload,
     updateActiveDownloadTitle

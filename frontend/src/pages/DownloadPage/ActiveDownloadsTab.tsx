@@ -1,4 +1,4 @@
-import { Cancel as CancelIcon } from '@mui/icons-material';
+import { Cancel as CancelIcon, Pause as PauseIcon } from '@mui/icons-material';
 import {
     Box,
     IconButton,
@@ -18,14 +18,16 @@ interface Download {
     speed?: string;
     downloadedSize?: string;
     totalSize?: string;
+    phase?: string;
 }
 
 interface ActiveDownloadsTabProps {
     downloads: Download[];
     onCancel: (id: string) => void;
+    onPause: (id: string) => void;
 }
 
-export function ActiveDownloadsTab({ downloads, onCancel }: ActiveDownloadsTabProps) {
+export function ActiveDownloadsTab({ downloads, onCancel, onPause }: ActiveDownloadsTabProps) {
     const { t } = useLanguage();
 
     if (downloads.length === 0) {
@@ -39,9 +41,24 @@ export function ActiveDownloadsTab({ downloads, onCancel }: ActiveDownloadsTabPr
                     <ListItem
                         disableGutters
                         secondaryAction={
-                            <IconButton edge="end" aria-label="cancel" onClick={() => onCancel(download.id)}>
-                                <CancelIcon />
-                            </IconButton>
+                            <Box>
+                                <IconButton
+                                    edge={false}
+                                    aria-label="pause"
+                                    onClick={() => onPause(download.id)}
+                                    title={t('pause') || 'Pause'}
+                                >
+                                    <PauseIcon />
+                                </IconButton>
+                                <IconButton
+                                    edge="end"
+                                    aria-label="cancel"
+                                    onClick={() => onCancel(download.id)}
+                                    title={t('cancel') || 'Cancel'}
+                                >
+                                    <CancelIcon />
+                                </IconButton>
+                            </Box>
                         }
                     >
                         <ListItemText
@@ -50,6 +67,11 @@ export function ActiveDownloadsTab({ downloads, onCancel }: ActiveDownloadsTabPr
                             secondary={
                                 <Box sx={{ mt: 1 }}>
                                     <LinearProgress variant="determinate" value={download.progress || 0} sx={{ mb: 1 }} />
+                                    {download.phase === 'merging' && (
+                                        <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: 'warning.main' }}>
+                                            {t('downloadMerging') || 'Merging segments…'}
+                                        </Typography>
+                                    )}
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                                         <Typography variant="body2" fontWeight="bold" color="primary">
                                             {download.progress?.toFixed(1)}%

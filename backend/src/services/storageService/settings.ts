@@ -156,6 +156,7 @@ export const WHITELISTED_SETTINGS = [
   "cloudflaredToken",
   "allowedHosts",
   "pauseOnFocusLoss",
+  "autoShutdownEnabled",
   "playSoundOnTaskComplete",
   "tmdbApiKey",
   "mountDirectories",

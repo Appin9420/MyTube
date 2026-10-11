@@ -1,11 +1,12 @@
 import axios from "axios";
 import path from "path";
 import { AVATARS_DIR, IMAGES_DIR, VIDEOS_DIR } from "../../config/paths";
-import { DownloadCancelledError } from "../../errors/DownloadErrors";
+import { DownloadCancelledError, isPausedError } from "../../errors/DownloadErrors";
 import { regenerateSmallThumbnailForThumbnailPath } from "../thumbnailMirrorService";
 import {
   isCancellationError,
   isDownloadActive,
+  throwIfCancelled,
 } from "../../utils/downloadUtils";
 import { formatVideoFilename } from "../../utils/helpers";
 import { logger } from "../../utils/logger";
@@ -31,6 +32,10 @@ export interface DownloadOptions {
   downloadId?: string;
   onStart?: (cancel: () => void) => void;
   filenameTemplateSourceOptions?: import("../filenameTemplate/types").FilenameTemplateSourceOptions;
+  // Relative output path stored by a paused download's snapshot (relative to
+  // VIDEOS_DIR). When resumable artifacts still exist on disk, the downloader
+  // reuses this exact path instead of planning a fresh one.
+  resumeOutputPath?: string;
   // Generic key-value store for specific downloader options
   [key: string]: any;
 }
@@ -153,12 +158,15 @@ export abstract class BaseDownloader implements IDownloader {
    * Common cancellation check used across all downloaders
    * @param downloadId - The download ID to check
    * @throws DownloadCancelledError if download was cancelled
+   * @throws DownloadPausedError if download was paused (see downloadUtils.throwIfCancelled)
    */
   protected throwIfCancelled(downloadId?: string): void {
     if (!isDownloadActive(downloadId)) {
       logger.info("Download was cancelled (no longer in active downloads)");
-      throw DownloadCancelledError.create();
     }
+    // Delegates to the pause-aware check: a missing active row with a paused
+    // row present throws DownloadPausedError so callers skip cancel cleanup.
+    throwIfCancelled(downloadId);
   }
 
   /**
@@ -166,12 +174,17 @@ export abstract class BaseDownloader implements IDownloader {
    * Checks if error is a cancellation error and throws DownloadCancelledError
    * @param error - The error to check
    * @param cleanupFn - Optional cleanup function to call before throwing
+   * @throws DownloadPausedError as-is when error is a pause error (no cleanup:
+   *   .part/.ytdl artifacts must be kept so the download can resume)
    * @throws DownloadCancelledError if error is a cancellation error
    */
   protected async handleCancellationError(
     error: unknown,
     cleanupFn?: () => void | Promise<void>
   ): Promise<void> {
+    if (isPausedError(error)) {
+      throw error;
+    }
     if (isCancellationError(error)) {
       logger.info("Download was cancelled");
       if (cleanupFn) {

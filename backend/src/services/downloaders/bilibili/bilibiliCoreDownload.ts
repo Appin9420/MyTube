@@ -1,6 +1,11 @@
 import path from "path";
 import { VIDEOS_DIR } from "../../../config/paths";
-import { DownloadCancelledError } from "../../../errors/DownloadErrors";
+import {
+  DownloadCancelledError,
+  DownloadPausedError,
+  isPausedError,
+  type DownloadStopReason,
+} from "../../../errors/DownloadErrors";
 import { downloadAndProcessAvatar } from "../../../utils/avatarUtils";
 import { formatBytes } from "../../../utils/downloadUtils";
 import { logger } from "../../../utils/logger";
@@ -56,8 +61,9 @@ export async function downloadVideo(
   retryFloorHeight?: number,
   preserveExistingOutputOnCancel = false
 ): Promise<BilibiliVideoInfo> {
-  const tempDir = createTempDir();
+  const tempDir = createTempDir(downloadId);
   let rawSourceInfo: Record<string, unknown> | null = null;
+  let stopReason: DownloadStopReason | undefined;
 
   try {
     logger.info("Downloading Bilibili video using yt-dlp to:", tempDir);
@@ -103,10 +109,13 @@ export async function downloadVideo(
     const description = metaSource.description || "";
 
     if (downloadId) {
+      // Note: no progress reset here. On resume the manager pre-writes the
+      // paused snapshot's progress into the active row, and across collection
+      // parts progress is accumulated by the ProgressTracker; writing
+      // progress: 0 would wipe it and make the download appear to restart.
       storageService.updateActiveDownload(downloadId, {
         title: videoTitle,
         filename: videoTitle,
-        progress: 0,
       });
     }
 
@@ -178,9 +187,15 @@ export async function downloadVideo(
     const subprocess = executeYtDlpSpawn(url, flags);
 
     if (onStart) {
-      onStart(async () => {
+      onStart(async (reason?: DownloadStopReason) => {
+        stopReason = reason ?? "cancel";
         logger.info("Killing subprocess for download:", downloadId);
         subprocess.kill();
+
+        // On pause, keep the temp dir so yt-dlp can resume from .part files.
+        if (stopReason === "pause") {
+          return;
+        }
 
         // Clean up partial files
         logger.info("Cleaning up partial files...");
@@ -229,6 +244,9 @@ export async function downloadVideo(
     try {
       await subprocess;
     } catch (error: any) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        throw DownloadPausedError.create();
+      }
       downloadError = error;
       // Only log as warning if it's an expected subtitle-related issue
       // "Invalid data found when processing input" is a real error, not expected
@@ -255,6 +273,11 @@ export async function downloadVideo(
     try {
       downloader.throwIfCancelledPublic(downloadId);
     } catch (error) {
+      if (stopReason === "pause" || isPausedError(error)) {
+        // A pause keeps the temp dir (and its .part files) so yt-dlp can
+        // resume into it later - never fall through to removeSafe below.
+        throw DownloadPausedError.create();
+      }
       wasCancelled = true;
       // If we have a download error, prefer showing that over cancellation
       if (!downloadError) {
@@ -484,6 +507,10 @@ export async function downloadVideo(
       authorAvatarPath: authorAvatarPath,
     };
   } catch (error: any) {
+    // A paused download keeps its temp dir so yt-dlp can resume later.
+    if (stopReason === "pause" || isPausedError(error)) {
+      throw DownloadPausedError.create();
+    }
     logger.error("Error in downloadBilibiliVideo:", error);
 
     // Make sure we clean up the temp directory if it exists

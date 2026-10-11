@@ -671,6 +671,21 @@ export const zh = {
   loadingCollection: "加载合集中...",
   collectionNotFound: "未找到合集",
   noVideosInCollection: "此合集中没有视频。",
+  autoShutdownTitle: '下载完成后自动关机',
+  autoShutdownDescription: '开启后，当所有下载任务全部结束时，将在 60 秒后关闭计算机。再次关闭此开关可取消尚未执行的关机。',
+  batchTransfer: '批量转移',
+  moveToAnotherCollection: '移动到其他合集',
+  targetCollection: '目标合集',
+  selectedCount: '已选 {n} 个',
+  selectAll: '全选',
+  clearSelection: '清除选择',
+  confirmMove: '确认转移',
+  moving: '转移中...',
+  videosMovedToCollection: '视频已转移',
+  failedToMoveVideos: '转移失败',
+  mergeDuplicates: '合并同名合集',
+  mergeDone: '合并完成',
+  mergeFailed: '合并失败',
   back: "返回",
 
 
@@ -784,6 +799,15 @@ export const zh = {
   allPartsAddedToCollection: "所有分P将被添加到此合集",
   allVideosAddedToCollection: "所有视频将被添加到此合集",
   queued: "已排队",
+
+  pausedDownloads: "已暂停",
+
+  downloadPaused: "下载已暂停",
+
+  downloadResumed: "下载已恢复",
+
+
+  downloadMerging: "合并切片中…",
   waitingInQueue: "等待中",
 
 
