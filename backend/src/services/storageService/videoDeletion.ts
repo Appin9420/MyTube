@@ -47,7 +47,7 @@ export function deleteVideo(
     // Manual deletes go to the recycle bin: managed artifacts are moved to
     // the trash directory and the row leaves the library. Restoring brings
     // everything back. Automated cleanups stay permanent.
-    if (reason === "manual" && isLocalManagedVideo(videoToDelete)) {
+    if (reason === "manual") {
       const entryId = moveToTrash(videoToDelete, allCollections);
       if (entryId) {
         finalizeLibraryRemoval(id, videoToDelete, reason);
