@@ -270,9 +270,17 @@ export function moveToTrash(
     moves.push({ from, to });
   }
 
-  if (moves.length === 0) {
+  if (moves.length > 0) {
+    logger.info(
+      `Video moved to recycle bin: ${video.title} (trash entry ${entryId}, ${moves.length} file(s))`
+    );
+  } else {
+    // No files found on disk — still record the trash entry so the user can
+    // see the deletion in the recycle bin and restore the database record.
     fs.rmdirSync(entryDir, { recursive: true });
-    return null;
+    logger.info(
+      `Video moved to recycle bin (no files on disk): ${video.title} (trash entry ${entryId})`
+    );
   }
 
   try {
@@ -304,9 +312,6 @@ export function moveToTrash(
     );
   }
 
-  logger.info(
-    `Video moved to recycle bin: ${video.title} (trash entry ${entryId}, ${moves.length} file(s))`
-  );
   return entryId;
 }
 
