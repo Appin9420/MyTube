@@ -1,5 +1,5 @@
 import { Box } from '@mui/material';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { neutral } from '../../../theme/colors';
 import api from '../../../utils/apiClient';
 import { useStatisticsWatchTracker } from '../../../hooks/useStatisticsWatchTracker';
@@ -64,9 +64,17 @@ const VideoControls: React.FC<VideoControlsProps> = ({
     liveSubtitle,
     onSetCover,
 }) => {
-    // Core video player logic
+    // Transcode fallback: when the browser cannot decode the source format
+    // (e.g. MKV / AVI), request a permanent server-side transcode to MP4.
+    const [transcodedSrc, setTranscodedSrc] = useState<string | null>(null);
+    const [transcoding, setTranscoding] = useState(false);
+    const transcodingRequestIdRef = useRef<string | null>(null);
+    const effectiveSrc = transcodedSrc || src;
+
+    // Core video player logic — uses effectiveSrc so the hook properly resets
+    // the video element when the transcoded MP4 path replaces the original.
     const videoPlayer = useVideoPlayer({
-        src,
+        src: effectiveSrc,
         autoPlay,
         autoLoop,
         startTime,
@@ -105,8 +113,6 @@ const VideoControls: React.FC<VideoControlsProps> = ({
 
     // When the browser cannot decode the source format (e.g. MKV / AVI),
     // trigger a permanent server-side transcode to MP4.
-    const [transcodedSrc, setTranscodedSrc] = useState<string | null>(null);
-    const [transcoding, setTranscoding] = useState(false);
     const handleVideoErrorWithFallback = useCallback(
         (e: React.SyntheticEvent<HTMLVideoElement>) => {
             const videoError = e.currentTarget.error;
@@ -117,28 +123,34 @@ const VideoControls: React.FC<VideoControlsProps> = ({
                 !transcodedSrc &&
                 !transcoding
             ) {
+                const requestId = `${statisticsVideoId}-${Date.now()}`;
+                transcodingRequestIdRef.current = requestId;
                 setTranscoding(true);
                 loading.setError(null);
                 loading.startLoading();
-                api.post(`/videos/${statisticsVideoId}/transcode`).then((res) => {
-                    const data = res.data?.data ?? res.data;
-                    if (data?.videoPath) {
-                        setTranscodedSrc(data.videoPath);
-                    }
-                }).catch((err) => {
-                    console.error("Transcode failed:", err);
-                    loading.handleVideoError(e);
-                }).finally(() => {
-                    setTranscoding(false);
-                });
+                api.post(`/videos/${statisticsVideoId}/transcode`, undefined, { timeout: 600000 })
+                    .then((res) => {
+                        if (transcodingRequestIdRef.current !== requestId) return;
+                        const data = res.data?.data ?? res.data;
+                        if (data?.videoPath) {
+                            setTranscodedSrc(data.videoPath);
+                        }
+                    })
+                    .catch((err) => {
+                        if (transcodingRequestIdRef.current !== requestId) return;
+                        console.error("Transcode failed:", err);
+                        loading.handleVideoError(e);
+                    })
+                    .finally(() => {
+                        if (transcodingRequestIdRef.current !== requestId) return;
+                        setTranscoding(false);
+                    });
                 return;
             }
             loading.handleVideoError(e);
         },
         [statisticsVideoId, transcodedSrc, transcoding, loading],
     );
-
-    const effectiveSrc = transcodedSrc || src;
 
     // Volume control
     const volume = useVolume(videoPlayer.videoRef);
@@ -172,6 +184,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
 
     // Handle video source changes - trigger loading
     useEffect(() => {
+        transcodingRequestIdRef.current = null;
         setTranscodedSrc(null);
         setTranscoding(false);
         if (src) {
