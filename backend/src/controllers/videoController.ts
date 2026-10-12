@@ -617,7 +617,7 @@ function resolveAbsoluteVideoPath(video: { videoPath?: string; videoFilename?: s
   return null;
 }
 
-export const serveTranscodedStream = async (
+export const transcodeToMp4 = async (
   req: Request,
   res: Response
 ): Promise<void> => {
@@ -633,49 +633,58 @@ export const serveTranscodedStream = async (
     throw new NotFoundError("Video file not found on disk");
   }
 
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cache-Control", "no-store");
+  if (filePath.toLowerCase().endsWith(".mp4")) {
+    sendData(res, { videoPath: video.videoPath, videoFilename: video.videoFilename });
+    return;
+  }
 
-  const ffmpegArgs = [
-    "-i", filePath,
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-tune", "faststart",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "frag_keyframe+empty_moov+faststart",
-    "-f", "mp4",
-    "pipe:1",
-  ];
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const baseName = path.basename(filePath, ext);
+  const tempOutput = path.join(dir, `${baseName}.transcoding.mp4`);
+  const finalOutput = path.join(dir, `${baseName}.mp4`);
 
-  const ffmpeg = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  await new Promise<void>((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-i", filePath,
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "23",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-movflags", "+faststart",
+      "-y",
+      tempOutput,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
 
-  req.on("close", () => {
-    ffmpeg.kill("SIGTERM");
+    ffmpeg.on("error", (err) => reject(err));
+    ffmpeg.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
+    });
   });
 
-  ffmpeg.stdout.on("data", (chunk: Buffer) => {
-    if (!res.write(chunk)) {
-      ffmpeg.stdout.pause();
-      res.once("drain", () => ffmpeg.stdout.resume());
+  try {
+    fs.renameSync(tempOutput, finalOutput);
+    if (path.resolve(filePath) !== path.resolve(finalOutput)) {
+      fs.unlinkSync(filePath);
     }
+  } catch (cleanupErr) {
+    logger.warn("Transcode file cleanup failed", cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)));
+  }
+
+  const newFilename = `${baseName}.mp4`;
+  let newVideoPath = video.videoPath;
+  if (video.videoPath?.startsWith("/videos/")) {
+    newVideoPath = video.videoPath.replace(new RegExp(`${ext.replace(".", "\\.")}$`), ".mp4");
+  }
+
+  storageService.updateVideo(id, {
+    videoPath: newVideoPath,
+    videoFilename: newFilename,
   });
 
-  ffmpeg.stderr.on("data", (data: Buffer) => {
-    logger.debug(`[ffmpeg-transcode] ${data.toString().trim()}`);
-  });
+  logger.info(`Video transcoded to MP4: ${video.title} (${filePath} -> ${finalOutput})`);
 
-  ffmpeg.on("error", (err) => {
-    logger.error("ffmpeg spawn failed", err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "ffmpeg not available" });
-    } else {
-      res.end();
-    }
-  });
-
-  ffmpeg.on("close", () => {
-    res.end();
-  });
+  sendData(res, { videoPath: newVideoPath, videoFilename: newFilename });
 };

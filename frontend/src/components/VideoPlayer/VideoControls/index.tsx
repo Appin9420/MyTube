@@ -1,6 +1,7 @@
 import { Box } from '@mui/material';
 import React, { useCallback, useEffect, useState } from 'react';
 import { neutral } from '../../../theme/colors';
+import api from '../../../utils/apiClient';
 import { useStatisticsWatchTracker } from '../../../hooks/useStatisticsWatchTracker';
 import ControlsOverlay from './ControlsOverlay';
 import { useFocusPause } from './hooks/useFocusPause';
@@ -103,8 +104,9 @@ const VideoControls: React.FC<VideoControlsProps> = ({
     const loading = useVideoLoading();
 
     // When the browser cannot decode the source format (e.g. MKV / AVI),
-    // fall back to a server-side ffmpeg transcode stream.
-    const [transcodeFallback, setTranscodeFallback] = useState(false);
+    // trigger a permanent server-side transcode to MP4.
+    const [transcodedSrc, setTranscodedSrc] = useState<string | null>(null);
+    const [transcoding, setTranscoding] = useState(false);
     const handleVideoErrorWithFallback = useCallback(
         (e: React.SyntheticEvent<HTMLVideoElement>) => {
             const videoError = e.currentTarget.error;
@@ -112,21 +114,31 @@ const VideoControls: React.FC<VideoControlsProps> = ({
                 videoError &&
                 videoError.code === 4 &&
                 statisticsVideoId &&
-                !transcodeFallback
+                !transcodedSrc &&
+                !transcoding
             ) {
-                setTranscodeFallback(true);
+                setTranscoding(true);
                 loading.setError(null);
                 loading.startLoading();
+                api.post(`/videos/${statisticsVideoId}/transcode`).then((res) => {
+                    const data = res.data?.data ?? res.data;
+                    if (data?.videoPath) {
+                        setTranscodedSrc(data.videoPath);
+                    }
+                }).catch((err) => {
+                    console.error("Transcode failed:", err);
+                    loading.handleVideoError(e);
+                }).finally(() => {
+                    setTranscoding(false);
+                });
                 return;
             }
             loading.handleVideoError(e);
         },
-        [statisticsVideoId, transcodeFallback, loading],
+        [statisticsVideoId, transcodedSrc, transcoding, loading],
     );
 
-    const effectiveSrc = transcodeFallback && statisticsVideoId
-        ? `/api/videos/${statisticsVideoId}/transcoded-stream`
-        : src;
+    const effectiveSrc = transcodedSrc || src;
 
     // Volume control
     const volume = useVolume(videoPlayer.videoRef);
@@ -160,7 +172,8 @@ const VideoControls: React.FC<VideoControlsProps> = ({
 
     // Handle video source changes - trigger loading
     useEffect(() => {
-        setTranscodeFallback(false);
+        setTranscodedSrc(null);
+        setTranscoding(false);
         if (src) {
             loading.startLoading();
         } else {
