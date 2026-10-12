@@ -37,14 +37,14 @@ export const TrashPanel: React.FC = () => {
         queryKey: ['trash'],
         queryFn: async () => {
             const res = await api.get('/trash');
-            return (res.data?.items ?? []) as TrashItem[];
+            return (res.data?.data?.items ?? []) as TrashItem[];
         },
     });
 
     const restoreMutation = useMutation({
         mutationFn: async (id: string) => {
             const res = await api.post(`/trash/${id}/restore`);
-            return res.data;
+            return res.data?.data;
         },
         onSuccess: () => {
             showSnackbar('已恢复到媒体库', 'success');
@@ -59,7 +59,7 @@ export const TrashPanel: React.FC = () => {
     const purgeMutation = useMutation({
         mutationFn: async (id: string) => {
             const res = await api.delete(`/trash/${id}`);
-            return res.data;
+            return res.data?.data;
         },
         onSuccess: () => {
             showSnackbar('已彻底删除', 'success');
