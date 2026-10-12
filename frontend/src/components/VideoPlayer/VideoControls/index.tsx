@@ -1,5 +1,5 @@
 import { Box } from '@mui/material';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { neutral } from '../../../theme/colors';
 import { useStatisticsWatchTracker } from '../../../hooks/useStatisticsWatchTracker';
 import ControlsOverlay from './ControlsOverlay';
@@ -102,6 +102,32 @@ const VideoControls: React.FC<VideoControlsProps> = ({
     // Loading and error states
     const loading = useVideoLoading();
 
+    // When the browser cannot decode the source format (e.g. MKV / AVI),
+    // fall back to a server-side ffmpeg transcode stream.
+    const [transcodeFallback, setTranscodeFallback] = useState(false);
+    const handleVideoErrorWithFallback = useCallback(
+        (e: React.SyntheticEvent<HTMLVideoElement>) => {
+            const videoError = e.currentTarget.error;
+            if (
+                videoError &&
+                videoError.code === 4 &&
+                statisticsVideoId &&
+                !transcodeFallback
+            ) {
+                setTranscodeFallback(true);
+                loading.setError(null);
+                loading.startLoading();
+                return;
+            }
+            loading.handleVideoError(e);
+        },
+        [statisticsVideoId, transcodeFallback, loading],
+    );
+
+    const effectiveSrc = transcodeFallback && statisticsVideoId
+        ? `/api/videos/${statisticsVideoId}/transcoded-stream`
+        : src;
+
     // Volume control
     const volume = useVolume(videoPlayer.videoRef);
 
@@ -134,6 +160,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
 
     // Handle video source changes - trigger loading
     useEffect(() => {
+        setTranscodeFallback(false);
         if (src) {
             loading.startLoading();
         } else {
@@ -224,7 +251,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
             <Box sx={{ position: 'relative', flex: fullscreen.isFullscreen ? 1 : undefined, minHeight: fullscreen.isFullscreen ? 0 : undefined }}>
                 <VideoElement
                     videoRef={videoPlayer.videoRef}
-                    src={src}
+                    src={effectiveSrc}
                     poster={poster}
                     isLoading={loading.isLoading}
                     loadError={loading.loadError}
@@ -236,7 +263,7 @@ const VideoControls: React.FC<VideoControlsProps> = ({
                     onEnded={onEnded}
                     onTimeUpdate={videoPlayer.handleTimeUpdate}
                     onLoadedMetadata={handleLoadedMetadata}
-                    onError={loading.handleVideoError}
+                    onError={handleVideoErrorWithFallback}
                     onLoadStart={handleLoadStart}
                     onCanPlay={handleCanPlay}
                     onLoadedData={handleLoadedData}

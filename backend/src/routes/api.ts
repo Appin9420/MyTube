@@ -92,6 +92,12 @@ const apiRouteDefinitions: ApiRouteDefinition[] = [
     handlers: [asyncHandler(videoController.serveMountVideo)],
   },
   {
+    method: "get",
+    path: "/videos/:id/transcoded-stream",
+    allowApiKey: true,
+    handlers: [asyncHandler(videoController.serveTranscodedStream)],
+  },
+  {
     method: "put",
     path: "/videos/progress",
     handlers: [asyncHandler(videoMetadataController.updateProgressByBody)],

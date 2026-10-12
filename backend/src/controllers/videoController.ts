@@ -1,5 +1,6 @@
 /// <reference path="../types/ass-to-vtt.d.ts" />
 import crypto from "crypto";
+import { spawn } from "child_process";
 import { Request, Response } from "express";
 import fs from "fs-extra";
 import path from "path";
@@ -596,4 +597,85 @@ export const serveMountVideo = async (
   assertMountFileExists(filePath);
   setMountVideoHeaders(res, filePath);
   res.sendFile(path.basename(filePath), { root: path.dirname(filePath) });
+};
+
+function resolveAbsoluteVideoPath(video: { videoPath?: string; videoFilename?: string }): string | null {
+  if (video.videoPath?.startsWith("/videos/")) {
+    const relative = video.videoPath.replace(/^\/videos\//, "");
+    const resolved = path.resolve(path.join(VIDEOS_DIR, ...relative.split("/")));
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  if (video.videoPath?.startsWith("mount:")) {
+    const raw = video.videoPath.substring(6);
+    const resolved = resolveMountFilePath(raw);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  if (video.videoFilename) {
+    const fallback = path.resolve(path.join(VIDEOS_DIR, video.videoFilename));
+    if (fs.existsSync(fallback)) return fallback;
+  }
+  return null;
+}
+
+export const serveTranscodedStream = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const id = getStringParam(req.params.id) ?? "";
+  const video = storageService.getVideoById(id, getVisibilityScopedRole(req));
+
+  if (!video) {
+    throw new NotFoundError("Video", id);
+  }
+
+  const filePath = resolveAbsoluteVideoPath(video);
+  if (!filePath) {
+    throw new NotFoundError("Video file not found on disk");
+  }
+
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-store");
+
+  const ffmpegArgs = [
+    "-i", filePath,
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-tune", "faststart",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-movflags", "frag_keyframe+empty_moov+faststart",
+    "-f", "mp4",
+    "pipe:1",
+  ];
+
+  const ffmpeg = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+
+  req.on("close", () => {
+    ffmpeg.kill("SIGTERM");
+  });
+
+  ffmpeg.stdout.on("data", (chunk: Buffer) => {
+    if (!res.write(chunk)) {
+      ffmpeg.stdout.pause();
+      res.once("drain", () => ffmpeg.stdout.resume());
+    }
+  });
+
+  ffmpeg.stderr.on("data", (data: Buffer) => {
+    logger.debug(`[ffmpeg-transcode] ${data.toString().trim()}`);
+  });
+
+  ffmpeg.on("error", (err) => {
+    logger.error("ffmpeg spawn failed", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "ffmpeg not available" });
+    } else {
+      res.end();
+    }
+  });
+
+  ffmpeg.on("close", () => {
+    res.end();
+  });
 };
