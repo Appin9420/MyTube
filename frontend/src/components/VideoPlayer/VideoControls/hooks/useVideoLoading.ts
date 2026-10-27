@@ -15,7 +15,7 @@ export const useVideoLoading = () => {
     };
   }, []);
 
-  const startLoading = () => {
+  const startLoading = (onTimeout?: () => void) => {
     setIsLoading(true);
     setLoadError(null);
 
@@ -27,6 +27,9 @@ export const useVideoLoading = () => {
     loadTimeoutRef.current = setTimeout(() => {
       setLoadError(t("videoLoadTimeout"));
       setIsLoading(false);
+      if (onTimeout) {
+        onTimeout();
+      }
     }, 30000);
   };
 

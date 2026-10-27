@@ -188,7 +188,30 @@ const VideoControls: React.FC<VideoControlsProps> = ({
         setTranscodedSrc(null);
         setTranscoding(false);
         if (src) {
-            loading.startLoading();
+            // Pass timeout handler to trigger transcode if loading stalls
+            loading.startLoading(() => {
+                if (statisticsVideoId && !transcodedSrc && !transcoding) {
+                    const requestId = `${statisticsVideoId}-${Date.now()}`;
+                    transcodingRequestIdRef.current = requestId;
+                    setTranscoding(true);
+                    api.post(`/videos/${statisticsVideoId}/transcode`, undefined, { timeout: 600000 })
+                        .then((res) => {
+                            if (transcodingRequestIdRef.current !== requestId) return;
+                            const data = res.data?.data ?? res.data;
+                            if (data?.videoPath) {
+                                setTranscodedSrc(data.videoPath);
+                            }
+                        })
+                        .catch((err) => {
+                            if (transcodingRequestIdRef.current !== requestId) return;
+                            console.error("Transcode failed:", err);
+                        })
+                        .finally(() => {
+                            if (transcodingRequestIdRef.current !== requestId) return;
+                            setTranscoding(false);
+                        });
+                }
+            });
         } else {
             loading.stopLoading();
             loading.setError(null);
