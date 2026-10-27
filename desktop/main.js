@@ -363,7 +363,10 @@ function spawnBackend(resources, homeDir, port) {
 
   backendProcess = spawn(resolvedNode, [resources.backendEntry], {
     cwd: homeDir,
-    env: buildBackendEnv(homeDir, resources.binDir),
+    // The backend reads its listen port from PORT (backend/src/server.ts);
+    // without this it always binds 5551, even when pickBackendPort picked a
+    // fallback port because the default was taken.
+    env: { ...buildBackendEnv(homeDir, resources.binDir), PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -740,28 +743,129 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// --- Stale backend cleanup -------------------------------------------------
+// A backend from an older install (different resources dir, no longer under
+// the scheduled task's control) can survive as a zombie holding DEFAULT_PORT;
+// `schtasks /End` cannot touch it. Identify such processes by command line
+// (node.exe running a server.js under a MyTube path) and take them down so
+// the current build can bind the port.
+
+function isMytubeBackendCommandLine(commandLine) {
+  if (!commandLine) return false;
+  const lower = commandLine.toLowerCase();
+  return lower.includes("server.js") && lower.includes("mytube");
+}
+
+function listPortOwnerPids(port) {
+  return new Promise((resolve) => {
+    const { exec } = require("child_process");
+    exec("netstat -ano -p tcp", { windowsHide: true }, (err, stdout) => {
+      if (err) {
+        resolve([]);
+        return;
+      }
+      const pids = new Set();
+      for (const line of String(stdout).split(/\r?\n/)) {
+        const cols = line.trim().split(/\s+/);
+        if (
+          cols.length >= 5 &&
+          cols[3] === "LISTENING" &&
+          cols[1].endsWith(`:${port}`)
+        ) {
+          const pid = parseInt(cols[4], 10);
+          if (Number.isInteger(pid) && pid > 0) {
+            pids.add(pid);
+          }
+        }
+      }
+      resolve([...pids]);
+    });
+  });
+}
+
+function getProcessCommandLine(pid) {
+  const run = (command, parse) =>
+    new Promise((resolve) => {
+      const { exec } = require("child_process");
+      exec(command, { windowsHide: true }, (err, stdout) => {
+        resolve(err ? null : parse(String(stdout || "")));
+      });
+    });
+  return run("wmic process where processid=" + pid + " get commandline", (out) =>
+    out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !/^commandline$/i.test(line))[0] || null
+  ).then((found) =>
+    found ||
+    run(
+      "powershell -NoProfile -Command \"(Get-CimInstance Win32_Process -Filter 'ProcessId=" +
+        pid +
+        "').CommandLine\"",
+      (out) => out.trim() || null
+    )
+  );
+}
+
+async function killStaleBackendsOnPort(port) {
+  const pids = await listPortOwnerPids(port);
+  let killedAny = false;
+  for (const pid of pids) {
+    const commandLine = await getProcessCommandLine(pid);
+    if (!isMytubeBackendCommandLine(commandLine)) {
+      appendDesktopLog(
+        `headless handover: port ${port} held by pid ${pid} (${commandLine || "unknown"}), not a MyTube backend - leaving it alone`
+      );
+      continue;
+    }
+    appendDesktopLog(
+      `headless handover: killing stale MyTube backend pid ${pid}: ${commandLine}`
+    );
+    await new Promise((resolve) => {
+      const { exec } = require("child_process");
+      exec(`taskkill /pid ${pid} /T /F`, { windowsHide: true }, () => resolve());
+    });
+    killedAny = true;
+  }
+  return killedAny;
+}
+
 // Stop the headless service and wait until it releases the backend port so
 // our own backend can bind it.
 async function yieldPortToDesktop() {
-  if (!HEADLESS_SERVICE_TASK) return;
   const handoverHomeDir = process.env.MYTUBE_HOME
     ? path.resolve(process.env.MYTUBE_HOME)
     : path.join(app.getPath("userData"), "server-home");
-  appendDesktopLog(`headless handover: stopping ${HEADLESS_SERVICE_TASK}`);
-  // Tell the tray exe to stand down (it polls this file every 3s).
-  try {
-    fs.writeFileSync(
-      path.join(handoverHomeDir, "tray-handover.flag"),
-      new Date().toISOString()
-    );
-  } catch { }
-  spawnSchtasks("End");
+  if (HEADLESS_SERVICE_TASK) {
+    appendDesktopLog(`headless handover: stopping ${HEADLESS_SERVICE_TASK}`);
+    // Tell the tray exe to stand down (it polls this file every 3s).
+    try {
+      fs.writeFileSync(
+        path.join(handoverHomeDir, "tray-handover.flag"),
+        new Date().toISOString()
+      );
+    } catch { }
+    spawnSchtasks("End");
+  }
   for (let i = 0; i < 40; i++) {
     if (await isPortFree(DEFAULT_PORT)) {
       return;
     }
     await sleep(500);
   }
+  // The polite stop didn't free the port; force-clear leftover MyTube
+  // backends, then allow a short grace period for the socket to close.
+  if (await killStaleBackendsOnPort(DEFAULT_PORT)) {
+    for (let i = 0; i < 20; i++) {
+      if (await isPortFree(DEFAULT_PORT)) {
+        return;
+      }
+      await sleep(500);
+    }
+  }
+  appendDesktopLog(
+    `headless handover: port ${DEFAULT_PORT} still busy; falling back to an alternate port`
+  );
 }
 
 function restartHeadlessService() {
